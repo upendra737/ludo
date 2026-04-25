@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Premium Palette */
+    --color-red-start: #ff6b6b;
+    --color-red-end: #ee5a6f;
+    --color-green-start: #51cf66;
+    --color-green-end: #37b24d;
+    --color-yellow-start: #ffd93d;
+    --color-yellow-end: #ffc107;
+    --color-blue-start: #4dabf7;
+    --color-blue-end: #339af0;
+    
+    --bg-primary: #f8fafc;
+    --bg-accent: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    
+    /* Glows */
+    --glow-red: 0 0 20px rgba(255, 107, 107, 0.4);
+    --glow-green: 0 0 20px rgba(81, 207, 102, 0.4);
+    --glow-yellow: 0 0 20px rgba(255, 217, 61, 0.4);
+    --glow-blue: 0 0 20px rgba(77, 171, 247, 0.4);
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 overflow-x-hidden select-none font-sans;
+    -webkit-tap-highlight-color: transparent;
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.05) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(168, 85, 247, 0.05) 0px, transparent 50%);
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .glass {
+    @apply bg-white/70 backdrop-blur-md border border-white/40 shadow-xl;
+  }
+  
+  .glass-dark {
+    @apply bg-slate-900/60 backdrop-blur-xl border border-white/10 shadow-2xl;
+  }
+
+  .premium-shadow {
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.2), 0 4px 10px -5px rgba(0, 0, 0, 0.1);
+  }
+
+  .text-glow {
+    text-shadow: 0 0 10px currentColor;
+  }
+}
+
+@keyframes dice-shake {
+  0%, 100% { transform: rotate(0deg) translate(0px, 0px); }
+  25% { transform: rotate(5deg) translate(2px, -2px); }
+  75% { transform: rotate(-5deg) translate(-2px, 2px); }
+}
+
+.dice-shake {
+  animation: dice-shake 0.1s infinite;
+}
+
+@keyframes gold-pulse {
+  0%, 100% { filter: drop-shadow(0 0 5px #ffd700); }
+  50% { filter: drop-shadow(0 0 15px #ffd700); }
+}
+
+.six-glow {
+  animation: gold-pulse 1s infinite ease-in-out;
+}

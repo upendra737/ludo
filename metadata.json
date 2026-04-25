@@ -1,0 +1,6 @@
+{
+  "name": "Global Ludo",
+  "description": "A high-performance, real-time multiplayer Ludo game for playing across the globe.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
