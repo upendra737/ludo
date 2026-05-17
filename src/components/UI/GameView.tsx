@@ -9,7 +9,7 @@ import confetti from 'canvas-confetti';
 import { LudoBoard } from '../Board/LudoBoard';
 import { useGameStore } from '../../store/useGameStore';
 import { useSocket } from '../../hooks/useSocket';
-import { useSounds, primeAudio, SoundType } from '../../hooks/useSounds';
+import { useSounds, SoundType } from '../../hooks/useSounds';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { Dice } from './Dice';
 import { LudoEngine } from '../../lib/engine';
@@ -144,9 +144,6 @@ export const GameView: React.FC = () => {
   const [showCopyOk,     setShowCopyOk]     = useState(false);
   const [activeTab,      setActiveTab]      = useState<'chat' | 'log'>('chat');
   const chatEndRef = useRef<HTMLDivElement>(null);
-
-  // Unlock AudioContext early — user has already interacted with page to reach GameView
-  useEffect(() => { primeAudio(); }, []);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [gameState?.messages]);
 
