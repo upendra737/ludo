@@ -5,6 +5,7 @@ import { Server } from "socket.io";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { ClientToServerEvents, ServerToClientEvents } from "./src/types/socket";
+import { PlayerColor } from "./src/types/game";
 import { RoomManager } from "./src/lib/roomManager";
 import { LudoEngine } from "./src/lib/engine";
 
