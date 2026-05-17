@@ -3,13 +3,13 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Send, MessageSquare, Settings, Volume2, VolumeX,
   X, Share2, Activity, Crown, Swords,
-  ChevronRight, Zap, Sparkles,
+  ChevronRight, Zap, Moon, Sun,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { LudoBoard } from '../Board/LudoBoard';
 import { useGameStore } from '../../store/useGameStore';
 import { useSocket } from '../../hooks/useSocket';
-import { useSounds, SoundType } from '../../hooks/useSounds';
+import { useSounds, primeAudio, SoundType } from '../../hooks/useSounds';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { Dice } from './Dice';
 import { LudoEngine } from '../../lib/engine';
@@ -132,8 +132,8 @@ export const GameView: React.FC = () => {
   const { rollDice, moveToken, sendChat, sendEmoji, leaveRoom, restartGame } = useSocket();
   const { playSound, stopSound } = useSounds();
   const {
-    masterVolume, isMuted, sfxEnabled, musicEnabled,
-    setMasterVolume, toggleMute, toggleSFX, toggleMusic,
+    masterVolume, isMuted, sfxEnabled, musicEnabled, theme,
+    setMasterVolume, toggleMute, toggleSFX, toggleMusic, toggleTheme,
   } = useSettingsStore();
 
   const [isRollingLocal, setIsRollingLocal] = useState(false);
@@ -144,6 +144,9 @@ export const GameView: React.FC = () => {
   const [showCopyOk,     setShowCopyOk]     = useState(false);
   const [activeTab,      setActiveTab]      = useState<'chat' | 'log'>('chat');
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Unlock AudioContext early — user has already interacted with page to reach GameView
+  useEffect(() => { primeAudio(); }, []);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [gameState?.messages]);
 
@@ -430,10 +433,25 @@ export const GameView: React.FC = () => {
                     <Share2 size={18} /><span className="text-[10px] font-black uppercase tracking-wide">Invite</span>
                   </button>
                 </div>
+                <button onClick={toggleTheme}
+                  className="flex items-center justify-between w-full p-4 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all">
+                  <div className="flex items-center gap-3">
+                    {theme === 'dark'
+                      ? <Moon size={16} className="text-indigo-400" />
+                      : <Sun size={16} className="text-amber-400" />}
+                    <span className="text-sm font-bold text-white">
+                      {theme === 'dark' ? 'Dark Mode' : 'Light Mode'}
+                    </span>
+                  </div>
+                  <div className={`w-10 h-5 rounded-full relative transition-colors ${theme === 'dark' ? 'bg-indigo-500' : 'bg-amber-500'}`}>
+                    <motion.div animate={{ x: theme === 'dark' ? 22 : 2 }} className="absolute top-1 w-3 h-3 bg-white rounded-full" />
+                  </div>
+                </button>
+
                 <button onClick={toggleSFX}
                   className="flex items-center justify-between w-full p-4 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all">
                   <div className="flex items-center gap-3">
-                    <Sparkles size={16} className={sfxEnabled ? 'text-indigo-400' : 'text-slate-600'} />
+                    <Volume2 size={16} className={sfxEnabled ? 'text-indigo-400' : 'text-slate-600'} />
                     <span className="text-sm font-bold text-white">Sound Effects</span>
                   </div>
                   <div className={`w-10 h-5 rounded-full relative transition-colors ${sfxEnabled ? 'bg-indigo-500' : 'bg-slate-600'}`}>
