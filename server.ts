@@ -90,30 +90,47 @@ async function startServer() {
       }
     });
 
+    // ── room:add-bot ─────────────────────────────────────────────────
+    const addBotsToRoom = (userId: string, count: number) => {
+      const room = RoomManager.getRoomByPlayer(userId);
+      if (!room || room.status !== 'WAITING' || room.players.length >= 4) return;
+      const allColors: PlayerColor[] = ['RED', 'GREEN', 'YELLOW', 'BLUE'];
+      const taken = room.players.map(p => p.color);
+      const available = allColors.filter(c => !taken.includes(c));
+      const toAdd = Math.min(count, available.length, 4 - room.players.length);
+      for (let i = 0; i < toAdd; i++) {
+        const color = available[i];
+        const botId = `bot-${Math.random().toString(36).substr(2, 5)}`;
+        room.players.push({ id: botId, name: `${color[0]}${color.slice(1).toLowerCase()} Bot 🤖`, color, isReady: true, tokens: [], isAI: true });
+      }
+      io.to(room.roomId).emit("room:update", room);
+    };
+
+    socket.on("room:add-bot", ({ count }) => {
+      const userId = getUserId(socket.id);
+      if (userId) addBotsToRoom(userId, count ?? 1);
+    });
+
+    // Keep legacy event for backward-compat
     socket.on("room:fill-bots", () => {
       const userId = getUserId(socket.id);
+      if (userId) addBotsToRoom(userId, 3);
+    });
+
+    // ── room:pick-color ───────────────────────────────────────────────
+    socket.on("room:pick-color", ({ color }) => {
+      const userId = getUserId(socket.id);
       if (!userId) return;
-
       const room = RoomManager.getRoomByPlayer(userId);
-      if (room && room.status === 'WAITING' && room.players.length < 4) {
-        const colors: PlayerColor[] = ['RED', 'GREEN', 'YELLOW', 'BLUE'];
-        const existingColors = room.players.map(p => p.color);
-        const availableColors = colors.filter(c => !existingColors.includes(c));
-
-        while (room.players.length < 4 && availableColors.length > 0) {
-          const color = availableColors.shift()!;
-          const botId = `bot-${Math.random().toString(36).substr(2, 5)}`;
-          room.players.push({
-            id: botId,
-            name: `${color} Bot 🤖`,
-            color,
-            isReady: true,
-            tokens: [],
-            isAI: true
-          });
-        }
-        io.to(room.roomId).emit("room:update", room);
-      }
+      if (!room || room.status !== 'WAITING') return;
+      const player = room.players.find(p => p.id === userId);
+      if (!player) return;
+      const takenByHuman = room.players.find(p => p.id !== userId && p.color === color && !p.isAI);
+      if (takenByHuman) return; // another real player has this colour
+      const takenByBot = room.players.find(p => p.isAI && p.color === color);
+      if (takenByBot) takenByBot.color = player.color; // swap bot to old colour
+      player.color = color;
+      io.to(room.roomId).emit("room:update", room);
     });
 
     const processBotTurn = async (roomId: string) => {

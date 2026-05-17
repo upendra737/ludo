@@ -6,12 +6,10 @@ interface SettingsState {
   isMuted: boolean;
   sfxEnabled: boolean;
   musicEnabled: boolean;
-  theme: 'light' | 'dark';
   setMasterVolume: (volume: number) => void;
   toggleMute: () => void;
   toggleSFX: () => void;
   toggleMusic: () => void;
-  toggleTheme: () => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -21,12 +19,10 @@ export const useSettingsStore = create<SettingsState>()(
       isMuted: false,
       sfxEnabled: true,
       musicEnabled: true,
-      theme: 'light',
       setMasterVolume: (volume) => set({ masterVolume: volume }),
       toggleMute: () => set((state) => ({ isMuted: !state.isMuted })),
       toggleSFX: () => set((state) => ({ sfxEnabled: !state.sfxEnabled })),
       toggleMusic: () => set((state) => ({ musicEnabled: !state.musicEnabled })),
-      toggleTheme: () => set((state) => ({ theme: state.theme === 'light' ? 'dark' : 'light' })),
     }),
     {
       name: 'ludo-settings',
