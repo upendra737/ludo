@@ -143,7 +143,14 @@ export const GameView: React.FC = () => {
   const [chatText,       setChatText]       = useState('');
   const [showCopyOk,     setShowCopyOk]     = useState(false);
   const [activeTab,      setActiveTab]      = useState<'chat' | 'log'>('chat');
+  const [diceSize,       setDiceSize]       = useState(() => window.innerWidth < 768 ? 82 : 108);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = () => setDiceSize(window.innerWidth < 768 ? 82 : 108);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [gameState?.messages]);
 
@@ -331,66 +338,96 @@ export const GameView: React.FC = () => {
               canMoveToken={canMoveToken}
               messages={gameState.messages}
               diceValue={gameState.diceValue}
+              activeColor={currentPlayer.color}
             />
           </div>
         </main>
 
         {/* Controls panel */}
         <aside className="game-controls">
-          {/* Dice */}
-          <div className="flex flex-col items-center gap-1 shrink-0">
-            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1 hidden md:block">Dice</p>
-            <Dice
-              value={isRollingLocal ? null : (gameState.diceValue ?? lastDiceValue)}
-              isRolling={isRollingLocal}
-              disabled={!isMyTurn || gameState.diceValue !== null}
-              onClick={handleRoll}
-            />
-            <p className="text-[9px] text-slate-600 font-medium hidden md:block">Space to roll</p>
-          </div>
 
-          {/* Separator */}
-          <div className="hidden md:block h-px bg-white/10 w-full my-1" />
+          {/* ── MOBILE layout: [Dice] [2×2 emojis] [Chat] ─────────────── */}
+          <div className="md:hidden flex items-center justify-between w-full gap-3 px-1">
+            {/* Dice */}
+            <div className="shrink-0">
+              <Dice
+                size={diceSize}
+                value={isRollingLocal ? null : (gameState.diceValue ?? lastDiceValue)}
+                isRolling={isRollingLocal}
+                disabled={!isMyTurn || gameState.diceValue !== null}
+                onClick={handleRoll}
+              />
+            </div>
 
-          {/* 4 emoji reactions */}
-          <div className="shrink-0">
-            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2 hidden md:block">React</p>
-            <div className="flex md:grid md:grid-cols-2 gap-2">
+            {/* Emoji 2×2 */}
+            <div className="grid grid-cols-2 gap-1.5 shrink-0">
               {EMOJIS.map(({ emoji, label, sound }) => (
                 <motion.button
                   key={emoji}
                   whileTap={{ scale: 0.78 }}
-                  whileHover={{ scale: 1.12 }}
                   onClick={() => handleEmoji(emoji, sound)}
                   title={label}
-                  className="flex flex-col items-center justify-center rounded-2xl transition-colors gap-1 border border-white/8 bg-white/8 hover:bg-white/15"
-                  style={{ width: 54, height: 54 }}
+                  className="flex items-center justify-center rounded-xl border border-white/8 bg-white/8 active:bg-white/20"
+                  style={{ width: 44, height: 44 }}
                 >
-                  <span className="text-2xl leading-none">{emoji}</span>
-                  <span className="text-[8px] font-bold text-slate-500 hidden md:block">{label}</span>
+                  <span className="text-xl leading-none">{emoji}</span>
                 </motion.button>
               ))}
             </div>
+
+            {/* Chat icon */}
+            <button onClick={() => setIsChatOpen(true)}
+              className="shrink-0 w-11 h-11 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-slate-400 active:scale-90">
+              <MessageSquare size={18} />
+            </button>
           </div>
 
-          {/* Separator */}
-          <div className="hidden md:block h-px bg-white/10 w-full my-1" />
-
-          {/* Chat */}
-          <button onClick={() => setIsChatOpen(true)}
-            className="hidden md:flex items-center justify-between w-full px-3 py-2.5 rounded-xl bg-white/8 hover:bg-white/15 border border-white/8 transition-all group">
-            <div className="flex items-center gap-2">
-              <MessageSquare size={14} className="text-slate-400 group-hover:text-white transition-colors" />
-              <span className="text-xs font-bold text-slate-400 group-hover:text-white transition-colors">Chat</span>
+          {/* ── DESKTOP layout: vertical column ────────────────────────── */}
+          <div className="hidden md:flex flex-col gap-2 w-full">
+            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Dice</p>
+            <div className="flex justify-center">
+              <Dice
+                size={diceSize}
+                value={isRollingLocal ? null : (gameState.diceValue ?? lastDiceValue)}
+                isRolling={isRollingLocal}
+                disabled={!isMyTurn || gameState.diceValue !== null}
+                onClick={handleRoll}
+              />
             </div>
-            <ChevronRight size={13} className="text-slate-600 group-hover:text-slate-300 transition-colors" />
-          </button>
+            <p className="text-[9px] text-slate-600 font-medium text-center">Space to roll</p>
 
-          {/* Mobile-only chat icon */}
-          <button onClick={() => setIsChatOpen(true)}
-            className="md:hidden w-12 h-12 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all active:scale-90">
-            <MessageSquare size={20} />
-          </button>
+            <div className="h-px bg-white/10 w-full my-1" />
+
+            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">React</p>
+            <div className="grid grid-cols-2 gap-2">
+              {EMOJIS.map(({ emoji, label, sound }) => (
+                <motion.button
+                  key={emoji}
+                  whileTap={{ scale: 0.78 }}
+                  whileHover={{ scale: 1.1 }}
+                  onClick={() => handleEmoji(emoji, sound)}
+                  title={label}
+                  className="flex flex-col items-center justify-center rounded-2xl border border-white/8 bg-white/8 hover:bg-white/15 gap-1"
+                  style={{ height: 54 }}
+                >
+                  <span className="text-2xl leading-none">{emoji}</span>
+                  <span className="text-[8px] font-bold text-slate-500">{label}</span>
+                </motion.button>
+              ))}
+            </div>
+
+            <div className="h-px bg-white/10 w-full my-1" />
+
+            <button onClick={() => setIsChatOpen(true)}
+              className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl bg-white/8 hover:bg-white/15 border border-white/8 transition-all group">
+              <div className="flex items-center gap-2">
+                <MessageSquare size={14} className="text-slate-400 group-hover:text-white transition-colors" />
+                <span className="text-xs font-bold text-slate-400 group-hover:text-white transition-colors">Chat</span>
+              </div>
+              <ChevronRight size={13} className="text-slate-600" />
+            </button>
+          </div>
+
         </aside>
       </div>
 

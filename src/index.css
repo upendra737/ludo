@@ -132,7 +132,8 @@
   .game-board-area > .board-sizer {
     position: relative;
     width: 100%;
-    max-width: calc(100dvh - 260px);  /* height-limited on mobile */
+    /* header(52) + players(68) + controls(110) + gaps+padding(30) = ~260px overhead */
+    max-width: calc(100dvh - 260px);
     max-height: calc(100dvh - 260px);
     aspect-ratio: 1 / 1;
   }
@@ -150,8 +151,7 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    justify-content: space-around;
-    gap: 8px;
+    /* mobile: natural height driven by dice size (82px) */
   }
 
   @media (min-width: 768px) {

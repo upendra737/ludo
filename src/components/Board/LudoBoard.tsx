@@ -12,6 +12,7 @@ interface Props {
   canMoveToken: (tokenId: string) => boolean;
   messages: ChatMessage[];
   diceValue: number | null;
+  activeColor: string; // currently active player's color
 }
 
 const COLOR_HEX: Record<string, string> = {
@@ -26,12 +27,22 @@ const BUBBLE_ANCHOR: Record<string, { x: number; y: number }> = {
   BLUE:   { x: 10, y: 96 },
 };
 
+// Corner rect origins for each color (in SVG units, cellSize = 100/15)
+const CORNER: Record<string, { x: number; y: number }> = {
+  RED:    { x: 0,              y: 0              },
+  GREEN:  { x: 100 * 9 / 15,  y: 0              },
+  YELLOW: { x: 100 * 9 / 15,  y: 100 * 9 / 15  },
+  BLUE:   { x: 0,              y: 100 * 9 / 15  },
+};
+const CORNER_SIZE = 100 * 6 / 15; // 6 cells wide/tall
+
 export const LudoBoard: React.FC<Props> = ({
   players,
   onTokenClick,
   canMoveToken,
   messages,
   diceValue,
+  activeColor,
 }) => {
   const cellSize = 100 / 15;
   const prevTokensPosRef = useRef<Record<string, number>>({});
@@ -232,6 +243,21 @@ export const LudoBoard: React.FC<Props> = ({
         <rect x={cellSize*9}   y="0"            width={cellSize*6} height={cellSize*6} fill="url(#gg)" rx="3"/>
         <rect x={cellSize*9}   y={cellSize*9}   width={cellSize*6} height={cellSize*6} fill="url(#gy)" rx="3"/>
         <rect x="0"            y={cellSize*9}   width={cellSize*6} height={cellSize*6} fill="url(#gb)" rx="3"/>
+
+        {/* Active player home glow — pulses on the active corner */}
+        {activeColor && CORNER[activeColor] && (
+          <motion.rect
+            x={CORNER[activeColor].x}
+            y={CORNER[activeColor].y}
+            width={CORNER_SIZE}
+            height={CORNER_SIZE}
+            rx="3"
+            fill={COLOR_HEX[activeColor] || '#6366f1'}
+            animate={{ opacity: [0, 0.22, 0] }}
+            transition={{ repeat: Infinity, duration: 1.4, ease: 'easeInOut' }}
+            style={{ pointerEvents: 'none' }}
+          />
+        )}
 
         {/* White inner token slots */}
         {[0,1,2,3].map(i => (
