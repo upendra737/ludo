@@ -143,11 +143,11 @@ export const GameView: React.FC = () => {
   const [chatText,       setChatText]       = useState('');
   const [showCopyOk,     setShowCopyOk]     = useState(false);
   const [activeTab,      setActiveTab]      = useState<'chat' | 'log'>('chat');
-  const [diceSize,       setDiceSize]       = useState(() => window.innerWidth < 768 ? 82 : 108);
+  const [diceSize,       setDiceSize]       = useState(() => window.innerWidth < 768 ? 70 : 90);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handler = () => setDiceSize(window.innerWidth < 768 ? 82 : 108);
+    const handler = () => setDiceSize(window.innerWidth < 768 ? 70 : 90);
     window.addEventListener('resize', handler);
     return () => window.removeEventListener('resize', handler);
   }, []);

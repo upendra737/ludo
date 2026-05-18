@@ -54,18 +54,23 @@ const FACE_ROT: Record<number, { x: number; y: number }> = {
   5: { x:  90, y:   0 },
 };
 
-// Constant 3/4 "die on a table" tilt added to every result pose. Keeps the
-// landed cube as a solid 3-face corner view (never a flat head-on card).
-const TILT_X = -22;
-const TILT_Y =  28;
-const TILT_Z =  -4;
+// During the TUMBLE: a wide bounded-cone tilt so the spinning cube always
+// shows 2-3 solid faces and never goes edge-on / flat.
+const SPIN_X = -22;
+const SPIN_Z =  -4;
+
+// At REST / landing: a small tilt so the cube shows essentially ONE face (the
+// rolled value) with just a gentle 3D hint — not the 3-face corner view.
+const REST_X =  -9;
+const REST_Y =  11;
+const REST_Z =   0;
 
 const resultPose = (v: number) => ({
-  x: FACE_ROT[v].x + TILT_X,
-  y: FACE_ROT[v].y + TILT_Y,
-  z: TILT_Z,
+  x: FACE_ROT[v].x + REST_X,
+  y: FACE_ROT[v].y + REST_Y,
+  z: REST_Z,
 });
-const IDLE = { x: TILT_X, y: TILT_Y, z: TILT_Z }; // == resultPose(1)
+const IDLE = { x: REST_X, y: REST_Y, z: REST_Z }; // == resultPose(1)
 
 const MIN_TUMBLE_MS      = 200;  // spin floor so a fast server reply still tumbles
 const SETTLE_DURATION_MS = 240;  // spring landing  (total ≈ 440ms, within 400–500ms)
@@ -188,8 +193,8 @@ export const Dice: React.FC<Props> = ({
       lastTsRef.current = ts;
 
       ry.current += velY.current * dt;                    // fast continuous spin
-      rx.current  = TILT_X + 14 * Math.sin(t * 6.0);      // bounded wobble  (-36…-8)
-      rz.current  = TILT_Z +  7 * Math.sin(t * 8.0);      // bounded wobble  (±~7)
+      rx.current  = SPIN_X + 14 * Math.sin(t * 6.0);      // bounded wobble  (-36…-8)
+      rz.current  = SPIN_Z +  7 * Math.sin(t * 8.0);      // bounded wobble  (±~7)
 
       write(rx.current, ry.current, rz.current, 'none');
       rafRef.current = requestAnimationFrame(frame);
