@@ -28,7 +28,7 @@ export class RoomManager {
     if (states.length) console.log(`[rooms] rehydrated ${states.length} room(s) from DB`);
   }
 
-  static createRoom(hostName: string, hostId: string): GameState {
+  static createRoom(hostName: string, hostId: string, targetPlayers = 4): GameState {
     // Collision-safe code (P1 hardens the alphabet; this avoids overwrites now).
     let code = nanoid(6).toUpperCase();
     while (this.rooms.has(code)) code = nanoid(6).toUpperCase();
@@ -42,6 +42,7 @@ export class RoomManager {
     };
 
     const state = LudoEngine.createInitialState(code, [host]);
+    state.targetPlayers = Math.min(4, Math.max(2, Math.floor(targetPlayers) || 4));
     this.rooms.set(code, state);
     this.touch(code);
     persistRoom(state);

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Users, AlertCircle, Dice6, Pencil, Trophy } from 'lucide-react';
+import { Play, Users, AlertCircle, Dice6, Pencil, Trophy, Bot, ArrowLeft } from 'lucide-react';
 import { useSocket } from '../../hooks/useSocket';
 import { useGameStore } from '../../store/useGameStore';
 import { useProfileStore, AVATARS } from '../../store/useProfileStore';
@@ -13,7 +13,8 @@ export const Lobby: React.FC = () => {
   const [editing,   setEditing]   = useState(!hasIdentity);
   const [draftName, setDraftName] = useState(name);
   const [draftAv,   setDraftAv]   = useState(avatar || AVATARS[0]);
-  const [view,      setView]      = useState<'MENU' | 'JOIN'>('MENU');
+  const [view,      setView]      = useState<'MENU' | 'COUNT' | 'JOIN'>('MENU');
+  const [mode,      setMode]      = useState<'cpu' | 'private'>('private');
   const [roomCode,  setRoomCode]  = useState('');
 
   useEffect(() => {
@@ -29,8 +30,8 @@ export const Lobby: React.FC = () => {
     setEditing(false);
   };
 
-  const handleCreate = () => { if (name.trim()) createRoom(name.trim()); };
-  const handleJoin   = () => { if (name.trim() && roomCode.trim()) joinRoom(roomCode.trim(), name.trim()); };
+  const start      = (n: number) => { if (name.trim()) createRoom(name.trim(), n, mode === 'cpu'); };
+  const handleJoin = () => { if (name.trim() && roomCode.trim()) joinRoom(roomCode.trim(), name.trim()); };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4"
@@ -145,15 +146,54 @@ export const Lobby: React.FC = () => {
                     <Pencil size={14} className="text-slate-500 group-hover:text-slate-300" />
                   </button>
 
-                  <button onClick={handleCreate}
+                  <button onClick={() => { setMode('cpu'); setView('COUNT'); }}
                     className="w-full py-4 rounded-2xl font-black text-sm uppercase tracking-wider text-white flex items-center justify-center gap-3 transition-all active:scale-95 hover:brightness-110"
                     style={{ background: 'linear-gradient(135deg,#6366f1,#7c3aed)', boxShadow: '0 8px 24px rgba(99,102,241,0.35)' }}>
-                    <Play size={18} fill="currentColor" /> Create Room
+                    <Bot size={18} /> Play vs Computer
+                  </button>
+                  <button onClick={() => { setMode('private'); setView('COUNT'); }}
+                    className="w-full py-4 rounded-2xl font-black text-sm uppercase tracking-wider text-white flex items-center justify-center gap-3 transition-all active:scale-95 hover:bg-white/15"
+                    style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                    <Play size={18} fill="currentColor" /> Create Private Room
                   </button>
                   <button onClick={() => setView('JOIN')}
                     className="w-full py-4 rounded-2xl font-black text-sm uppercase tracking-wider text-white flex items-center justify-center gap-3 transition-all active:scale-95 hover:bg-white/15"
                     style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>
                     <Users size={18} /> Join with Code
+                  </button>
+                </motion.div>
+              )}
+
+              {/* ── Player-count picker ─────────────────────────────── */}
+              {!editing && view === 'COUNT' && (
+                <motion.div key="count"
+                  initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }}
+                  className="space-y-4"
+                >
+                  <div className="flex items-center gap-2 text-slate-300">
+                    {mode === 'cpu' ? <Bot size={16} className="text-indigo-400" /> : <Play size={16} className="text-indigo-400" />}
+                    <span className="text-sm font-black uppercase tracking-widest">
+                      {mode === 'cpu' ? 'Solo vs Computer' : 'Private Room'}
+                    </span>
+                  </div>
+                  <p className="text-xs font-black text-slate-500 uppercase tracking-widest">
+                    How many players?
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[2, 3, 4].map(n => (
+                      <button key={n} onClick={() => start(n)}
+                        className="py-6 rounded-2xl font-black text-white transition-all active:scale-95 hover:brightness-110 flex flex-col items-center gap-1"
+                        style={{ background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.30)' }}>
+                        <span className="text-2xl">{n}</span>
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wide">
+                          {mode === 'cpu' ? `you + ${n - 1} bot${n - 1 > 1 ? 's' : ''}` : 'players'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => setView('MENU')}
+                    className="w-full py-3 rounded-2xl text-sm font-bold text-slate-400 hover:text-white transition-all hover:bg-white/8 flex items-center justify-center gap-2">
+                    <ArrowLeft size={14} /> Back
                   </button>
                 </motion.div>
               )}

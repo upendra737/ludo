@@ -22,7 +22,7 @@ export const useSocket = () => {
   const { socket } = useContext(SocketContext);
   const { setGameState, setMe, setError } = useGameStore();
 
-  const createRoom  = (name: string)                      => socket?.emit('room:create', { name, userId: getUserId() });
+  const createRoom  = (name: string, players = 4, vsCpu = false) => socket?.emit('room:create', { name, userId: getUserId(), players, vsCpu });
   const joinRoom    = (code: string, name: string)         => socket?.emit('room:join', { code, name, userId: getUserId() });
   const updateProfile = (name: string, avatar: string)    => socket?.emit('profile:update', { name, avatar });
   const setReady    = ()                                   => socket?.emit('room:ready');

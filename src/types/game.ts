@@ -28,6 +28,7 @@ export interface GameState {
   players: Player[];
   status: GameStatus;
   currentPlayerIndex: number;
+  targetPlayers: number; // 2-4 — slots to show / bots to fill / vs-CPU size
   diceValue: number | null;
   logs: string[];
   winner: string | null; // Player name

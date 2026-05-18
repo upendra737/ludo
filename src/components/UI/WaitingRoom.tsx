@@ -23,7 +23,8 @@ export const WaitingRoom: React.FC = () => {
 
   const me     = gameState.players.find(p => p.id === myInitial.id) || myInitial;
   const isHost = gameState.players[0]?.id === me.id;
-  const slots  = 4 - gameState.players.length;
+  const target = gameState.targetPlayers || 4;
+  const slots  = Math.max(0, target - gameState.players.length);
 
   const copy = (type: 'code' | 'link') => {
     const text = type === 'code'
@@ -62,7 +63,7 @@ export const WaitingRoom: React.FC = () => {
           <div>
             <h2 className="text-xl font-black text-white tracking-tight">Game Lobby</h2>
             <p className="text-slate-500 text-xs font-medium mt-0.5">
-              {gameState.players.length}/4 players · Waiting to start…
+              {gameState.players.length}/{target} players · Waiting to start…
             </p>
           </div>
 
@@ -93,7 +94,7 @@ export const WaitingRoom: React.FC = () => {
 
           {/* ── Player Slots ────────────────────────────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {Array.from({ length: 4 }).map((_, i) => {
+            {Array.from({ length: target }).map((_, i) => {
               const player = gameState.players[i];
               const cs     = player ? COLOR_STYLES[player.color] : null;
               return (

@@ -11,7 +11,7 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
-  'room:create':     (data: { name: string; userId: string }) => void;
+  'room:create':     (data: { name: string; userId: string; players?: number; vsCpu?: boolean }) => void;
   'room:join':       (data: { code: string; name: string; userId: string }) => void;
   'room:auth':       (data: { userId: string }) => void;
   'profile:update':  (data: { name: string; avatar: string }) => void;

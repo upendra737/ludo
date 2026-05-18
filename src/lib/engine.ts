@@ -24,6 +24,7 @@ export class LudoEngine {
       })),
       status: 'WAITING',
       currentPlayerIndex: 0,
+      targetPlayers: 4,
       diceValue: null,
       logs: ['Game created. Waiting for players...'],
       winner: null,

@@ -297,12 +297,39 @@ async function startServer() {
       })();
     });
 
-    socket.on("room:create", ({ name, userId }) => {
+    socket.on("room:create", ({ name, userId, players, vsCpu }) => {
       socketToUser.set(socket.id, userId);
       userToSocket.set(userId, socket.id);
-      const room = RoomManager.createRoom(name, userId);
+      const target = Math.min(4, Math.max(2, Math.floor(players ?? 4) || 4));
+      const room = RoomManager.createRoom(name, userId, target);
       socket.join(room.roomId);
-      socket.emit("room:joined", { player: room.players[0], roomState: room });
+
+      if (vsCpu) {
+        const allColors: PlayerColor[] = ["RED", "GREEN", "YELLOW", "BLUE"];
+        const taken = room.players.map(p => p.color);
+        const avail = allColors.filter(c => !taken.includes(c));
+        const need = Math.max(0, room.targetPlayers - room.players.length);
+        for (let i = 0; i < need && i < avail.length; i++) {
+          const color = avail[i];
+          room.players.push({
+            id: `bot-${Math.random().toString(36).substr(2, 5)}`,
+            name: `${color[0]}${color.slice(1).toLowerCase()} Bot 🤖`,
+            color, isReady: true, tokens: [], isAI: true,
+          });
+        }
+        room.players.forEach(p => { p.isReady = true; });
+        room.status = "PLAYING";
+        room.players.forEach(p => {
+          p.tokens = Array.from({ length: 4 }).map((_, i) => ({
+            id: `${p.id}-token-${i}`, color: p.color, position: -(i + 1), isFinished: false,
+          }));
+        });
+        room.logs.push("Solo match vs computer started.");
+        socket.emit("room:joined", { player: room.players[0], roomState: room });
+        scheduleAfter(room);
+      } else {
+        socket.emit("room:joined", { player: room.players[0], roomState: room });
+      }
     });
 
     socket.on("room:join", ({ code, name, userId }) => {
