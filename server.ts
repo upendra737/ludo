@@ -3,6 +3,7 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import path from "path";
+import { readFileSync } from "fs";
 import { createServer as createViteServer } from "vite";
 import { ClientToServerEvents, ServerToClientEvents } from "./src/types/socket";
 import { PlayerColor, GameState, Player, Profile } from "./src/types/game";
@@ -587,8 +588,31 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     console.log(`Starting in PRODUCTION mode. Serving static files from: ${distPath}`);
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => res.sendFile(path.join(distPath, "index.html")));
+    app.use(express.static(distPath, { index: false }));
+
+    let html = "";
+    try { html = readFileSync(path.join(distPath, "index.html"), "utf8"); } catch {}
+
+    app.get("*", (req, res) => {
+      if (!html) { res.sendFile(path.join(distPath, "index.html")); return; }
+      const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "https").split(",")[0];
+      const host  = req.headers.host || "";
+      const origin = `${proto}://${host}`;
+      let out = html.replaceAll("https://ludo.example", origin);
+
+      const code = typeof req.query.room === "string"
+        ? req.query.room.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) : "";
+      if (code) {
+        out = out
+          .replaceAll("Ludo Elite — Multiplayer Ludo", `Join room ${code} · Ludo Elite`)
+          .replaceAll(
+            "Play classic Ludo online with friends or bots. Fast 3D dice, real-time multiplayer, private rooms.",
+            `Tap to join this Ludo Elite room and play now.`,
+          )
+          .replace(`content="${origin}/"`, `content="${origin}/?room=${code}"`);
+      }
+      res.set("Content-Type", "text/html").send(out);
+    });
   }
 
   httpServer.listen(PORT, "0.0.0.0", () => {

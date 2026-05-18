@@ -30,8 +30,21 @@ export const WaitingRoom: React.FC = () => {
     const text = type === 'code'
       ? gameState.roomId
       : `${window.location.origin}?room=${gameState.roomId}`;
-    navigator.clipboard.writeText(text);
+    navigator.clipboard?.writeText(text);
     setCopied(type);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const share = async () => {
+    const url = `${window.location.origin}?room=${gameState.roomId}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Ludo Elite', text: `Join my Ludo room ${gameState.roomId}`, url });
+        return;
+      } catch { /* cancelled / unsupported — fall back to copy */ }
+    }
+    navigator.clipboard?.writeText(url);
+    setCopied('link');
     setTimeout(() => setCopied(null), 2000);
   };
 
@@ -81,11 +94,11 @@ export const WaitingRoom: React.FC = () => {
               {copied === 'code' ? <Check size={14} className="text-green-400" /> : <Copy size={14} className="text-indigo-400" />}
             </button>
             <button
-              onClick={() => copy('link')}
+              onClick={share}
               className="flex items-center justify-end gap-1.5 text-[11px] font-bold text-slate-500 hover:text-slate-300 transition-colors"
             >
               {copied === 'link' ? <Check size={12} className="text-green-400" /> : <LinkIcon size={12} />}
-              {copied === 'link' ? 'Copied!' : 'Copy invite link'}
+              {copied === 'link' ? 'Copied!' : 'Share invite'}
             </button>
           </div>
         </div>

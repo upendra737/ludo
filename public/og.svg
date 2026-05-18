@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="0.55" stop-color="#131b3a"/>
+      <stop offset="1" stop-color="#0b1020"/>
+    </linearGradient>
+    <radialGradient id="orb" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#6366f1" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#6366f1" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="980" cy="140" r="320" fill="url(#orb)"/>
+  <circle cx="220" cy="520" r="300" fill="url(#orb)"/>
+
+  <!-- dice mark -->
+  <g transform="translate(150,195) rotate(-8)">
+    <rect width="240" height="240" rx="48" fill="#ffffff"/>
+    <circle cx="70"  cy="70"  r="26" fill="#1e293b"/>
+    <circle cx="170" cy="70"  r="26" fill="#1e293b"/>
+    <circle cx="70"  cy="170" r="26" fill="#1e293b"/>
+    <circle cx="170" cy="170" r="26" fill="#1e293b"/>
+    <circle cx="120" cy="120" r="26" fill="#6366f1"/>
+  </g>
+
+  <text x="470" y="290" font-family="Arial, Helvetica, sans-serif" font-size="104" font-weight="900" fill="#ffffff" letter-spacing="2">LUDO ELITE</text>
+  <text x="472" y="360" font-family="Arial, Helvetica, sans-serif" font-size="40" font-weight="700" fill="#a5b4fc" letter-spacing="6">MULTIPLAYER LUDO · PLAY ONLINE</text>
+
+  <g transform="translate(472,430)">
+    <rect width="22" height="22" rx="6" fill="#fa5252"/>
+    <rect x="34" width="22" height="22" rx="6" fill="#40c057"/>
+    <rect x="68" width="22" height="22" rx="6" fill="#fcc419"/>
+    <rect x="102" width="22" height="22" rx="6" fill="#339af0"/>
+    <text x="150" y="18" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#94a3b8">Friends &amp; bots · 3D dice · real-time</text>
+  </g>
+</svg>
