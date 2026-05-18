@@ -1,23 +1,29 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 
 /**
- * Production 3D dice.
+ * Production 3D dice — choreographed, never flattens, never vanishes, never desyncs.
  *
- * Hard rules that make it bulletproof:
- *  1. NO Framer Motion anywhere in the 3D transform chain. Framer manages
- *     `transform` through its own pipeline and silently drops the inherited
- *     `transform-style: preserve-3d` context — that is what was flattening the
- *     cube into a single dot / empty box. Every node here is a plain <div>
- *     with explicit preserve-3d.
- *  2. The cube transform is owned 100% imperatively (refs + rAF). React never
- *     writes `transform`, so a parent re-render can never reset or fight it.
- *  3. Landing is fully deterministic: the cube is rotated to the EXACT face
- *     for `value` before the settle transition starts, so the visible face is
- *     mathematically guaranteed to equal `value` — the label reads the same
- *     `value`, so a face/label mismatch is impossible by construction.
- *  4. Completion fires via transitionend AND a setTimeout fallback (guarded by
- *     a ref). transitionend can be silently skipped by the browser when a
- *     transition is interrupted; the fallback guarantees onSettled always runs.
+ * Three hard rules (each a bug that was actually shipped before):
+ *
+ *  1. NO flatten-triggers in the 3D chain. Per the CSS spec, `transform-style:
+ *     preserve-3d` is forced to `flat` when the element has `filter`,
+ *     `opacity<1`, `overflow≠visible`, `clip-path`, `mask`, or `isolation`.
+ *     The cube and every node between the perspective element and the faces
+ *     therefore carry NONE of those. The "disabled" dim is applied on
+ *     `.dice-press`, which is ABOVE the perspective element, so it composites
+ *     the finished 2D render without collapsing the cube's own 3D context.
+ *
+ *  2. NO backface culling. `backface-visibility:hidden` makes the browser drop
+ *     faces mid-tumble, which is the intermittent "vanish". All six faces are
+ *     fully opaque instead — the cube is a closed solid, depth-sorted, so the
+ *     near faces always occlude the far ones and something is always drawn.
+ *
+ *  3. Choreographed rotation. A free random X/Y/Z tumble passes through
+ *     edge-on orientations where a hollow plane-cube genuinely looks flat.
+ *     Here `rotateY` spins; `rotateX`/`rotateZ` only wobble inside a bounded
+ *     cone that never approaches 90°, so 2-3 solid faces are visible on every
+ *     single frame. The landing pose is the value's face plus a constant 3/4
+ *     tilt — deterministic, so the visible face always equals `value`.
  */
 
 interface Props {
@@ -38,70 +44,73 @@ const DOT: Record<number, [number, number][]> = {
   6: [[28, 22], [72, 22], [28, 50], [72, 50], [28, 78], [72, 78]],
 };
 
-// Cube rotation that brings each face value flush to the viewer
+// Cube rotation that brings each face flush to the camera (before the 3/4 tilt)
 const FACE_ROT: Record<number, { x: number; y: number }> = {
   1: { x:   0, y:   0 },
   6: { x:   0, y: 180 },
   3: { x:   0, y: -90 },
   4: { x:   0, y:  90 },
-  2: { x:  90, y:   0 },
-  5: { x: -90, y:   0 },
+  2: { x: -90, y:   0 },
+  5: { x:  90, y:   0 },
 };
 
-const REST_X = -26;   // resting tilt — shows top + front + right => reads as a solid cube
-const REST_Y =  34;
-const REST_Z =  -5;
+// Constant 3/4 "die on a table" tilt added to every result pose. Keeps the
+// landed cube as a solid 3-face corner view (never a flat head-on card).
+const TILT_X = -22;
+const TILT_Y =  28;
+const TILT_Z =  -4;
 
-const MIN_TUMBLE_MS      = 200;  // floor so a fast server reply still gets a real tumble
-const SETTLE_DURATION_MS = 240;  // springy landing  (total roll ≈ 440ms, within 400–500ms)
-const FALLBACK_PAD_MS    = 140;  // transitionend safety-net buffer
+const resultPose = (v: number) => ({
+  x: FACE_ROT[v].x + TILT_X,
+  y: FACE_ROT[v].y + TILT_Y,
+  z: TILT_Z,
+});
+const IDLE = { x: TILT_X, y: TILT_Y, z: TILT_Z }; // == resultPose(1)
+
+const MIN_TUMBLE_MS      = 200;  // spin floor so a fast server reply still tumbles
+const SETTLE_DURATION_MS = 240;  // spring landing  (total ≈ 440ms, within 400–500ms)
+const FALLBACK_PAD_MS    = 150;  // transitionend safety-net buffer
 
 export const Dice: React.FC<Props> = ({
   value, rolling, onClick, disabled, onSettled, size = 112,
 }) => {
-  const half = Math.round(size / 2);
+  const half  = Math.round(size / 2);
+  const depth = `${Math.round(size * 2.7)}px`; // dramatic perspective
 
-  // Face placement on the cube — translateZ pushes each face out by half the edge
+  // Static placement of each face on the (unrotated) cube
   const faceTransform: Record<number, string> = {
-    1: `rotateY(0deg)    translateZ(${half}px)`,
-    6: `rotateY(180deg)  translateZ(${half}px)`,
-    3: `rotateY(90deg)   translateZ(${half}px)`,
-    4: `rotateY(-90deg)  translateZ(${half}px)`,
-    2: `rotateX(-90deg)  translateZ(${half}px)`,
-    5: `rotateX(90deg)   translateZ(${half}px)`,
+    1: `rotateY(0deg)   translateZ(${half}px)`,
+    6: `rotateY(180deg) translateZ(${half}px)`,
+    3: `rotateY(90deg)  translateZ(${half}px)`,
+    4: `rotateY(-90deg) translateZ(${half}px)`,
+    2: `rotateX(90deg)  translateZ(${half}px)`,
+    5: `rotateX(-90deg) translateZ(${half}px)`,
   };
 
   const cubeRef = useRef<HTMLDivElement>(null);
 
-  // Accumulated rotation — persists across rolls so the cube spins on from where it rests
-  const accX = useRef(REST_X);
-  const accY = useRef(REST_Y);
-  const accZ = useRef(REST_Z);
+  // Accumulated rotation (persists across rolls so the spin continues smoothly)
+  const rx = useRef(IDLE.x);
+  const ry = useRef(IDLE.y);
+  const rz = useRef(IDLE.z);
 
-  // Tumble velocities (deg/sec) for a fluid, physical spin
-  const velX = useRef(0);
-  const velY = useRef(0);
-  const velZ = useRef(0);
-
-  const rafRef       = useRef<number | null>(null);
-  const lastTsRef    = useRef(0);
-  const startRef     = useRef(0);
-  const settledRef   = useRef(false);
-  const fallbackRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const velY        = useRef(0);   // continuous spin speed during a roll (deg/s)
+  const rafRef      = useRef<number | null>(null);
+  const startRef    = useRef(0);
+  const lastTsRef   = useRef(0);
+  const settledRef  = useRef(false);
+  const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [glow, setGlow] = useState(false);
 
-  const writeTransform = (x: number, y: number, z: number, transition: string) => {
+  const write = (x: number, y: number, z: number, transition: string) => {
     const el = cubeRef.current;
     if (!el) return;
     el.style.transition = transition;
     el.style.transform  = `translateZ(0) rotateX(${x}deg) rotateY(${y}deg) rotateZ(${z}deg)`;
   };
 
-  // Imperative initial pose (React never owns `transform`)
-  useLayoutEffect(() => {
-    writeTransform(accX.current, accY.current, accZ.current, 'none');
-  }, []);
+  useLayoutEffect(() => { write(rx.current, ry.current, rz.current, 'none'); }, []);
 
   const stopRaf = () => {
     if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -120,30 +129,33 @@ export const Dice: React.FC<Props> = ({
 
   const settle = useCallback((val: number) => {
     stopRaf();
+    const pose = resultPose(val);
 
-    const target = FACE_ROT[val];
+    // Current (pre-settle) pose from the last tumble frame
+    const fromX = rx.current;
+    const fromY = ry.current;
+    const fromZ = rz.current;
 
-    // Forward-only delta so the cube always rotates onward into the target face,
-    // then lands EXACTLY on it (+2 full spins for drama). Visible face === val.
-    const curX = ((accX.current % 360) + 360) % 360;
-    const curY = ((accY.current % 360) + 360) % 360;
-    const tgtX = ((target.x   % 360) + 360) % 360;
-    const tgtY = ((target.y   % 360) + 360) % 360;
-    const fwdX = ((tgtX - curX) + 360) % 360;
-    const fwdY = ((tgtY - curY) + 360) % 360;
+    // Forward-only Y delta → the cube always rolls onward into the result and
+    // lands EXACTLY on it (+2 spins for drama). X/Z ease from their wobble.
+    const curYn = ((fromY % 360) + 360) % 360;
+    const tgtYn = ((pose.y % 360) + 360) % 360;
+    const fwdY  = ((tgtYn - curYn) + 360) % 360;
 
-    accX.current = accX.current + fwdX + 720;
-    accY.current = accY.current + fwdY + 720;
-    accZ.current = 0;
+    const finalX = pose.x;
+    const finalY = fromY + fwdY + 720;
+    const finalZ = pose.z;
 
-    // Force a style flush so the browser registers the transition start reliably
-    writeTransform(accX.current, accY.current, 0, 'none');
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-    cubeRef.current?.offsetHeight;
-    writeTransform(
-      accX.current, accY.current, 0,
-      `transform ${SETTLE_DURATION_MS}ms cubic-bezier(0.18, 1.25, 0.36, 1)`,
-    );
+    rx.current = finalX;
+    ry.current = finalY;
+    rz.current = finalZ;
+
+    // Assert the pre-settle pose, force a reflow, THEN apply the transition so
+    // the browser reliably registers the start and fires transitionend.
+    write(fromX, fromY, fromZ, 'none');
+    if (cubeRef.current) void cubeRef.current.offsetHeight;
+    write(finalX, finalY, finalZ,
+      `transform ${SETTLE_DURATION_MS}ms cubic-bezier(0.18, 1.22, 0.34, 1)`);
 
     const el = cubeRef.current;
     const onEnd = (e: TransitionEvent) => {
@@ -153,7 +165,6 @@ export const Dice: React.FC<Props> = ({
     };
     el?.addEventListener('transitionend', onEnd);
 
-    // Safety net — transitionend can be silently dropped if interrupted
     clearFallback();
     fallbackRef.current = setTimeout(() => {
       el?.removeEventListener('transitionend', onEnd);
@@ -161,52 +172,60 @@ export const Dice: React.FC<Props> = ({
     }, SETTLE_DURATION_MS + FALLBACK_PAD_MS);
   }, [finishSettle]);
 
-  // ── Tumble: velocity-integrated rAF for a smooth, genuine physical spin ──
+  // ── Choreographed tumble (bounded cone → never edge-on, never flat) ──
   useEffect(() => {
     if (!rolling) return;
 
     settledRef.current = false;
     setGlow(false);
-    startRef.current = performance.now();
+    startRef.current  = performance.now();
     lastTsRef.current = startRef.current;
-
-    // Strong multi-axis angular velocity, biased so it tumbles forward
-    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
-    velX.current = rnd(620, 1020) * (Math.random() < 0.5 ? 1 : 0.6);
-    velY.current = rnd(680, 1120);
-    velZ.current = rnd(140, 300) * (Math.random() < 0.5 ? 1 : -1);
+    velY.current      = 1100 + Math.random() * 500; // deg/s
 
     const frame = (ts: number) => {
+      const t  = (ts - startRef.current) / 1000;          // seconds since roll
       const dt = Math.min(0.05, (ts - lastTsRef.current) / 1000);
       lastTsRef.current = ts;
 
-      accX.current += velX.current * dt;
-      accY.current += velY.current * dt;
-      accZ.current += velZ.current * dt;
+      ry.current += velY.current * dt;                    // fast continuous spin
+      rx.current  = TILT_X + 14 * Math.sin(t * 6.0);      // bounded wobble  (-36…-8)
+      rz.current  = TILT_Z +  7 * Math.sin(t * 8.0);      // bounded wobble  (±~7)
 
-      writeTransform(accX.current, accY.current, accZ.current, 'none');
+      write(rx.current, ry.current, rz.current, 'none');
       rafRef.current = requestAnimationFrame(frame);
     };
     rafRef.current = requestAnimationFrame(frame);
-
     return stopRaf;
   }, [rolling]);
 
   // ── Settle once the true value is known (respecting the tumble floor) ──
   useEffect(() => {
     if (!rolling || value === null) return;
-
     const elapsed   = performance.now() - startRef.current;
     const remaining = MIN_TUMBLE_MS - elapsed;
-
     if (remaining <= 0) { settle(value); return; }
     const t = setTimeout(() => settle(value), remaining);
     return () => clearTimeout(t);
   }, [rolling, value, settle]);
 
-  // Re-arm for the next roll cycle
+  // Idle / post-turn pose when not rolling. Uses the SAME forward-only delta as
+  // settle and no-ops when already in place — so it never fights a just-landed
+  // pose or interpolates a giant backward spin.
   useEffect(() => {
-    if (!rolling && value === null) settledRef.current = false;
+    if (rolling) return;
+    if (value === null) settledRef.current = false;
+
+    const p     = value === null ? IDLE : resultPose(value);
+    const curYn = ((ry.current % 360) + 360) % 360;
+    const tgtYn = ((p.y % 360) + 360) % 360;
+    const fwdY  = ((tgtYn - curYn) + 360) % 360;
+
+    if (fwdY === 0 && rx.current === p.x && rz.current === p.z) return; // already there
+
+    rx.current = p.x;
+    ry.current = ry.current + fwdY; // shortest forward path; keeps accumulator
+    rz.current = p.z;
+    write(rx.current, ry.current, rz.current, 'transform 320ms ease');
   }, [rolling, value]);
 
   useEffect(() => () => { stopRaf(); clearFallback(); }, []);
@@ -215,35 +234,33 @@ export const Dice: React.FC<Props> = ({
   const radius = Math.round(size * 0.17);
 
   return (
-    <div
-      className="flex flex-col items-center gap-3"
-      style={{ position: 'relative', zIndex: 50, isolation: 'isolate' }}
-    >
-      {/* press/hover scale lives OUTSIDE the perspective context */}
+    <div className="flex flex-col items-center gap-3" style={{ position: 'relative' }}>
+
+      {/* Press/hover/dim wrapper — ABOVE the perspective element, so its
+          opacity/filter composites the 2D result without flattening the cube */}
       <div
-        className={`dice-press${interactive ? ' di' : ''}`}
+        className={`dice-press${interactive ? ' di' : ''}${disabled ? ' dice-dim' : ''}`}
         onClick={interactive ? onClick : undefined}
         style={{ cursor: interactive ? 'pointer' : 'not-allowed' }}
       >
-        {/* ground shadow */}
+        {/* ground shadow (sibling, painted first → under the cube) */}
         <div style={{
-          position: 'absolute', bottom: -10, left: '14%', width: '72%', height: 14,
-          background: 'rgba(0,0,0,0.45)', borderRadius: '50%',
+          position: 'absolute', bottom: -10, left: '15%', width: '70%', height: 13,
+          background: 'rgba(0,0,0,0.42)', borderRadius: '50%',
           filter: 'blur(7px)', transform: 'scaleY(0.45)', pointerEvents: 'none',
         }} />
 
-        {/* six glow */}
+        {/* six glow (sibling, painted before the stage) */}
         <div style={{
-          position: 'absolute', inset: -size * 0.3,
-          borderRadius: '50%', pointerEvents: 'none', zIndex: -1,
-          background: 'radial-gradient(circle, rgba(251,191,36,0.7) 0%, transparent 66%)',
+          position: 'absolute', inset: -size * 0.32, borderRadius: '50%',
+          pointerEvents: 'none',
+          background: 'radial-gradient(circle, rgba(251,191,36,0.65) 0%, transparent 66%)',
           filter: 'blur(18px)',
           opacity: glow ? 1 : 0,
           transform: glow ? 'scale(1)' : 'scale(0.5)',
           transition: 'opacity .35s ease, transform .35s ease',
         }} />
 
-        {/* idle pulse ring */}
         {interactive && value === null && (
           <div className="dice-pulse" style={{
             position: 'absolute', inset: -5,
@@ -252,22 +269,21 @@ export const Dice: React.FC<Props> = ({
           }} />
         )}
 
-        {/* PERSPECTIVE STAGE — plain div, dramatic depth */}
+        {/* PERSPECTIVE STAGE — establishes the 3D context, no flatten props */}
         <div style={{
+          position: 'relative',
           width: size, height: size,
-          perspective: `${Math.round(size * 2.7)}px`,
-          perspectiveOrigin: '50% 45%',
-          WebkitPerspective: `${Math.round(size * 2.7)}px`,
+          perspective: depth,
+          WebkitPerspective: depth,
+          perspectiveOrigin: '50% 42%',
         }}>
-          {/* CUBE — preserve-3d, transform owned imperatively */}
+          {/* CUBE — preserve-3d, transform owned imperatively, NO filter/opacity */}
           <div
             ref={cubeRef}
             style={{
-              position: 'relative',
-              width: '100%', height: '100%',
+              position: 'absolute', inset: 0,
               transformStyle: 'preserve-3d',
               WebkitTransformStyle: 'preserve-3d',
-              filter: disabled ? 'grayscale(0.45) opacity(0.4)' : 'none',
             }}
           >
             {([1, 2, 3, 4, 5, 6] as const).map(fv => {
@@ -278,18 +294,17 @@ export const Dice: React.FC<Props> = ({
                   transform: faceTransform[fv],
                   transformStyle: 'preserve-3d',
                   WebkitTransformStyle: 'preserve-3d',
-                  backfaceVisibility: 'hidden',
-                  WebkitBackfaceVisibility: 'hidden',
+                  // fully OPAQUE — no backface-visibility, depth-sort occludes
                   borderRadius: radius,
                   background: isSix
-                    ? 'linear-gradient(135deg,#fffdf2 0%,#fef3c7 55%,#fde68a 100%)'
-                    : 'linear-gradient(135deg,#ffffff 0%,#eef4fb 55%,#dfe9f5 100%)',
+                    ? 'linear-gradient(135deg,#fffdf2 0%,#fef3c7 55%,#fcd34d 100%)'
+                    : 'linear-gradient(135deg,#ffffff 0%,#eef4fb 55%,#dbe6f4 100%)',
                   border: isSix
-                    ? '1.5px solid rgba(217,119,6,0.40)'
-                    : '1.5px solid rgba(170,196,224,0.95)',
+                    ? '1.5px solid rgba(202,138,4,0.55)'
+                    : '1.5px solid rgba(148,178,212,1)',
                   boxShadow: isSix
-                    ? 'inset 3px 4px 10px rgba(255,255,255,0.95), inset -4px -5px 12px rgba(161,79,0,0.16)'
-                    : 'inset 3px 4px 10px rgba(255,255,255,0.98), inset -4px -5px 12px rgba(15,40,75,0.14)',
+                    ? 'inset 3px 4px 11px rgba(255,255,255,0.95), inset -5px -6px 13px rgba(146,64,14,0.20)'
+                    : 'inset 3px 4px 11px rgba(255,255,255,0.98), inset -5px -6px 13px rgba(15,40,75,0.18)',
                 }}>
                   <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ padding: '14%' }}>
                     {DOT[fv].map(([cx, cy], i) => (
