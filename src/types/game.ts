@@ -32,6 +32,7 @@ export interface GameState {
   logs: string[];
   winner: string | null; // Player name
   lastRollTimestamp: number | null;
+  turnDeadline: number | null; // epoch ms — when the current turn auto-plays (server-armed)
   movesRemaining: number; // 1 unless they roll a 6 (handled by engine)
   messages: ChatMessage[];
   moveHistory: GameMove[];

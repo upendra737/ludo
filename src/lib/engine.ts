@@ -28,6 +28,7 @@ export class LudoEngine {
       logs: ['Game created. Waiting for players...'],
       winner: null,
       lastRollTimestamp: null,
+      turnDeadline: null,
       movesRemaining: 0,
       messages: [],
       moveHistory: []
