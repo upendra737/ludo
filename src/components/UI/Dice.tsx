@@ -1,5 +1,24 @@
-import React, { useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
+
+/**
+ * Production 3D dice.
+ *
+ * Hard rules that make it bulletproof:
+ *  1. NO Framer Motion anywhere in the 3D transform chain. Framer manages
+ *     `transform` through its own pipeline and silently drops the inherited
+ *     `transform-style: preserve-3d` context — that is what was flattening the
+ *     cube into a single dot / empty box. Every node here is a plain <div>
+ *     with explicit preserve-3d.
+ *  2. The cube transform is owned 100% imperatively (refs + rAF). React never
+ *     writes `transform`, so a parent re-render can never reset or fight it.
+ *  3. Landing is fully deterministic: the cube is rotated to the EXACT face
+ *     for `value` before the settle transition starts, so the visible face is
+ *     mathematically guaranteed to equal `value` — the label reads the same
+ *     `value`, so a face/label mismatch is impossible by construction.
+ *  4. Completion fires via transitionend AND a setTimeout fallback (guarded by
+ *     a ref). transitionend can be silently skipped by the browser when a
+ *     transition is interrupted; the fallback guarantees onSettled always runs.
+ */
 
 interface Props {
   value: number | null;
@@ -10,7 +29,7 @@ interface Props {
   size?: number;
 }
 
-const DOT_LAYOUTS: Record<number, [number, number][]> = {
+const DOT: Record<number, [number, number][]> = {
   1: [[50, 50]],
   2: [[28, 28], [72, 72]],
   3: [[28, 28], [50, 50], [72, 72]],
@@ -19,224 +38,262 @@ const DOT_LAYOUTS: Record<number, [number, number][]> = {
   6: [[28, 22], [72, 22], [28, 50], [72, 50], [28, 78], [72, 78]],
 };
 
-const VALUE_TO_ROT: Record<number, { x: number; y: number }> = {
-  1: { x: 0,   y: 0   },
-  6: { x: 0,   y: 180 },
-  3: { x: 0,   y: -90 },
-  4: { x: 0,   y: 90  },
-  2: { x: 90,  y: 0   },
-  5: { x: -90, y: 0   },
+// Cube rotation that brings each face value flush to the viewer
+const FACE_ROT: Record<number, { x: number; y: number }> = {
+  1: { x:   0, y:   0 },
+  6: { x:   0, y: 180 },
+  3: { x:   0, y: -90 },
+  4: { x:   0, y:  90 },
+  2: { x:  90, y:   0 },
+  5: { x: -90, y:   0 },
 };
 
-// Total roll experience strictly capped: MIN_TUMBLE_MS + SETTLE_DURATION_MS = 440ms
-const MIN_TUMBLE_MS      = 200;
-const SETTLE_DURATION_MS = 240;
+const REST_X = -26;   // resting tilt — shows top + front + right => reads as a solid cube
+const REST_Y =  34;
+const REST_Z =  -5;
+
+const MIN_TUMBLE_MS      = 200;  // floor so a fast server reply still gets a real tumble
+const SETTLE_DURATION_MS = 240;  // springy landing  (total roll ≈ 440ms, within 400–500ms)
+const FALLBACK_PAD_MS    = 140;  // transitionend safety-net buffer
 
 export const Dice: React.FC<Props> = ({
-  value, rolling, onClick, disabled, onSettled, size = 108,
+  value, rolling, onClick, disabled, onSettled, size = 112,
 }) => {
-  const half = Math.floor(size / 2);
+  const half = Math.round(size / 2);
 
-  const faceTx: Record<number, string> = {
-    1: `rotateY(0deg)   translateZ(${half}px)`,
-    6: `rotateY(180deg) translateZ(${half}px)`,
-    3: `rotateY(90deg)  translateZ(${half}px)`,
-    4: `rotateY(-90deg) translateZ(${half}px)`,
-    2: `rotateX(-90deg) translateZ(${half}px)`,
-    5: `rotateX(90deg)  translateZ(${half}px)`,
+  // Face placement on the cube — translateZ pushes each face out by half the edge
+  const faceTransform: Record<number, string> = {
+    1: `rotateY(0deg)    translateZ(${half}px)`,
+    6: `rotateY(180deg)  translateZ(${half}px)`,
+    3: `rotateY(90deg)   translateZ(${half}px)`,
+    4: `rotateY(-90deg)  translateZ(${half}px)`,
+    2: `rotateX(-90deg)  translateZ(${half}px)`,
+    5: `rotateX(90deg)   translateZ(${half}px)`,
   };
 
-  const cubeRef      = useRef<HTMLDivElement>(null);
-  const accX         = useRef(-20);
-  const accY         = useRef(25);
-  const accZ         = useRef(8);
+  const cubeRef = useRef<HTMLDivElement>(null);
+
+  // Accumulated rotation — persists across rolls so the cube spins on from where it rests
+  const accX = useRef(REST_X);
+  const accY = useRef(REST_Y);
+  const accZ = useRef(REST_Z);
+
+  // Tumble velocities (deg/sec) for a fluid, physical spin
+  const velX = useRef(0);
+  const velY = useRef(0);
+  const velZ = useRef(0);
+
   const rafRef       = useRef<number | null>(null);
-  const startTimeRef = useRef<number>(0);
+  const lastTsRef    = useRef(0);
+  const startRef     = useRef(0);
   const settledRef   = useRef(false);
-  const [showGlow, setShowGlow] = React.useState(false);
+  const fallbackRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const applyTransform = (x: number, y: number, z: number, transition: string) => {
-    if (!cubeRef.current) return;
-    cubeRef.current.style.transition = transition;
-    cubeRef.current.style.transform  =
-      `rotateX(${x}deg) rotateY(${y}deg) rotateZ(${z}deg)`;
+  const [glow, setGlow] = useState(false);
+
+  const writeTransform = (x: number, y: number, z: number, transition: string) => {
+    const el = cubeRef.current;
+    if (!el) return;
+    el.style.transition = transition;
+    el.style.transform  = `translateZ(0) rotateX(${x}deg) rotateY(${y}deg) rotateZ(${z}deg)`;
   };
 
-  const settle = useCallback((val: number) => {
+  // Imperative initial pose (React never owns `transform`)
+  useLayoutEffect(() => {
+    writeTransform(accX.current, accY.current, accZ.current, 'none');
+  }, []);
+
+  const stopRaf = () => {
+    if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+  };
+  const clearFallback = () => {
+    if (fallbackRef.current !== null) { clearTimeout(fallbackRef.current); fallbackRef.current = null; }
+  };
+
+  const finishSettle = useCallback((val: number) => {
     if (settledRef.current) return;
     settledRef.current = true;
-
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-
-    const target = VALUE_TO_ROT[val];
-    const curX = ((accX.current % 360) + 360) % 360;
-    const curY = ((accY.current % 360) + 360) % 360;
-    const tgtX = ((target.x % 360) + 360) % 360;
-    const tgtY = ((target.y % 360) + 360) % 360;
-    const fwdX = ((tgtX - curX) + 360) % 360;
-    const fwdY = ((tgtY - curY) + 360) % 360;
-    const newX = accX.current + fwdX + 720;
-    const newY = accY.current + fwdY + 720;
-
-    accX.current = newX;
-    accY.current = newY;
-    accZ.current = 0;
-
-    applyTransform(newX, newY, 0,
-      `transform ${SETTLE_DURATION_MS}ms cubic-bezier(0.25,1.4,0.4,1)`);
-
-    const cube = cubeRef.current;
-    if (!cube) {
-      setShowGlow(val === 6);
-      onSettled(val);
-      return;
-    }
-
-    const onEnd = (e: TransitionEvent) => {
-      if (e.propertyName !== 'transform') return;
-      cube.removeEventListener('transitionend', onEnd);
-      setShowGlow(val === 6);
-      onSettled(val);
-    };
-    cube.addEventListener('transitionend', onEnd);
+    clearFallback();
+    setGlow(val === 6);
+    onSettled(val);
   }, [onSettled]);
 
-  // RAF tumble — runs while rolling=true
+  const settle = useCallback((val: number) => {
+    stopRaf();
+
+    const target = FACE_ROT[val];
+
+    // Forward-only delta so the cube always rotates onward into the target face,
+    // then lands EXACTLY on it (+2 full spins for drama). Visible face === val.
+    const curX = ((accX.current % 360) + 360) % 360;
+    const curY = ((accY.current % 360) + 360) % 360;
+    const tgtX = ((target.x   % 360) + 360) % 360;
+    const tgtY = ((target.y   % 360) + 360) % 360;
+    const fwdX = ((tgtX - curX) + 360) % 360;
+    const fwdY = ((tgtY - curY) + 360) % 360;
+
+    accX.current = accX.current + fwdX + 720;
+    accY.current = accY.current + fwdY + 720;
+    accZ.current = 0;
+
+    // Force a style flush so the browser registers the transition start reliably
+    writeTransform(accX.current, accY.current, 0, 'none');
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    cubeRef.current?.offsetHeight;
+    writeTransform(
+      accX.current, accY.current, 0,
+      `transform ${SETTLE_DURATION_MS}ms cubic-bezier(0.18, 1.25, 0.36, 1)`,
+    );
+
+    const el = cubeRef.current;
+    const onEnd = (e: TransitionEvent) => {
+      if (e.propertyName !== 'transform') return;
+      el?.removeEventListener('transitionend', onEnd);
+      finishSettle(val);
+    };
+    el?.addEventListener('transitionend', onEnd);
+
+    // Safety net — transitionend can be silently dropped if interrupted
+    clearFallback();
+    fallbackRef.current = setTimeout(() => {
+      el?.removeEventListener('transitionend', onEnd);
+      finishSettle(val);
+    }, SETTLE_DURATION_MS + FALLBACK_PAD_MS);
+  }, [finishSettle]);
+
+  // ── Tumble: velocity-integrated rAF for a smooth, genuine physical spin ──
   useEffect(() => {
     if (!rolling) return;
 
     settledRef.current = false;
-    startTimeRef.current = performance.now();
-    setShowGlow(false);
+    setGlow(false);
+    startRef.current = performance.now();
+    lastTsRef.current = startRef.current;
 
-    const tumble = () => {
-      // ~45° max per frame at 60fps ≈ same average velocity as 170° per 60ms interval
-      accX.current += (Math.random() - 0.38) * 45;
-      accY.current += (Math.random() - 0.38) * 45;
-      accZ.current += (Math.random() - 0.5)  * 10;
-      applyTransform(accX.current, accY.current, accZ.current, 'none');
-      rafRef.current = requestAnimationFrame(tumble);
-    };
-    rafRef.current = requestAnimationFrame(tumble);
+    // Strong multi-axis angular velocity, biased so it tumbles forward
+    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    velX.current = rnd(620, 1020) * (Math.random() < 0.5 ? 1 : 0.6);
+    velY.current = rnd(680, 1120);
+    velZ.current = rnd(140, 300) * (Math.random() < 0.5 ? 1 : -1);
 
-    return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
+    const frame = (ts: number) => {
+      const dt = Math.min(0.05, (ts - lastTsRef.current) / 1000);
+      lastTsRef.current = ts;
+
+      accX.current += velX.current * dt;
+      accY.current += velY.current * dt;
+      accZ.current += velZ.current * dt;
+
+      writeTransform(accX.current, accY.current, accZ.current, 'none');
+      rafRef.current = requestAnimationFrame(frame);
     };
+    rafRef.current = requestAnimationFrame(frame);
+
+    return stopRaf;
   }, [rolling]);
 
-  // Settle once value arrives — waits for MIN_TUMBLE if server responds too fast
+  // ── Settle once the true value is known (respecting the tumble floor) ──
   useEffect(() => {
     if (!rolling || value === null) return;
 
-    const elapsed   = performance.now() - startTimeRef.current;
+    const elapsed   = performance.now() - startRef.current;
     const remaining = MIN_TUMBLE_MS - elapsed;
 
-    if (remaining <= 0) {
-      settle(value);
-    } else {
-      const t = setTimeout(() => settle(value), remaining);
-      return () => clearTimeout(t);
-    }
+    if (remaining <= 0) { settle(value); return; }
+    const t = setTimeout(() => settle(value), remaining);
+    return () => clearTimeout(t);
   }, [rolling, value, settle]);
 
-  // Reset settled guard when a new roll cycle begins
+  // Re-arm for the next roll cycle
   useEffect(() => {
     if (!rolling && value === null) settledRef.current = false;
   }, [rolling, value]);
+
+  useEffect(() => () => { stopRaf(); clearFallback(); }, []);
+
+  const interactive = !disabled && !rolling;
+  const radius = Math.round(size * 0.17);
 
   return (
     <div
       className="flex flex-col items-center gap-3"
       style={{ position: 'relative', zIndex: 50, isolation: 'isolate' }}
     >
-      {/*
-        Perspective wrapper — fixed 700px keeps the cube near-orthographic so it
-        never inverts, flattens, or vanishes at extreme tumble angles. Centered
-        origin = symmetric, stable rotation. Padding + overflow:visible give the
-        swept cube corners room so no ancestor clip ever crops it.
-      */}
-      <div style={{
-        perspective: '700px',
-        perspectiveOrigin: '50% 50%',
-        padding: Math.round(size * 0.14),
-        overflow: 'visible',
-      }}>
-        <motion.div
-          style={{
-            position: 'relative',
-            width: size,
-            height: size,
-            transformStyle: 'preserve-3d',
-            willChange: 'transform',
-          }}
-          whileHover={!disabled && !rolling ? { scale: 1.07 } : {}}
-          whileTap={!disabled && !rolling ? { scale: 0.90 } : {}}
-          onClick={!disabled && !rolling ? onClick : undefined}
-          className={!disabled && !rolling ? 'cursor-pointer select-none' : 'cursor-not-allowed select-none'}
-        >
-          {/* Ground shadow */}
-          <div className="absolute pointer-events-none" style={{
-            bottom: -12, left: '12%', width: '76%', height: 14,
-            background: 'rgba(0,0,0,0.50)',
-            borderRadius: '50%', filter: 'blur(7px)', transform: 'scaleY(0.45)',
+      {/* press/hover scale lives OUTSIDE the perspective context */}
+      <div
+        className={`dice-press${interactive ? ' di' : ''}`}
+        onClick={interactive ? onClick : undefined}
+        style={{ cursor: interactive ? 'pointer' : 'not-allowed' }}
+      >
+        {/* ground shadow */}
+        <div style={{
+          position: 'absolute', bottom: -10, left: '14%', width: '72%', height: 14,
+          background: 'rgba(0,0,0,0.45)', borderRadius: '50%',
+          filter: 'blur(7px)', transform: 'scaleY(0.45)', pointerEvents: 'none',
+        }} />
+
+        {/* six glow */}
+        <div style={{
+          position: 'absolute', inset: -size * 0.3,
+          borderRadius: '50%', pointerEvents: 'none', zIndex: -1,
+          background: 'radial-gradient(circle, rgba(251,191,36,0.7) 0%, transparent 66%)',
+          filter: 'blur(18px)',
+          opacity: glow ? 1 : 0,
+          transform: glow ? 'scale(1)' : 'scale(0.5)',
+          transition: 'opacity .35s ease, transform .35s ease',
+        }} />
+
+        {/* idle pulse ring */}
+        {interactive && value === null && (
+          <div className="dice-pulse" style={{
+            position: 'absolute', inset: -5,
+            border: '2px solid rgba(99,102,241,0.45)',
+            borderRadius: radius + 4, pointerEvents: 'none',
           }} />
+        )}
 
-          {/* Golden glow for six */}
-          <AnimatePresence>
-            {showGlow && (
-              <motion.div key="glow"
-                initial={{ opacity: 0, scale: 0.5 }}
-                animate={{ opacity: 1, scale: 1.7 }}
-                exit={{ opacity: 0, scale: 0.5 }}
-                className="absolute inset-0 pointer-events-none"
-                style={{
-                  borderRadius: '50%',
-                  background: 'radial-gradient(circle, rgba(251,191,36,0.7) 0%, transparent 68%)',
-                  filter: 'blur(16px)', zIndex: -1,
-                }}
-              />
-            )}
-          </AnimatePresence>
-
-          {/* 3D cube */}
+        {/* PERSPECTIVE STAGE — plain div, dramatic depth */}
+        <div style={{
+          width: size, height: size,
+          perspective: `${Math.round(size * 2.7)}px`,
+          perspectiveOrigin: '50% 45%',
+          WebkitPerspective: `${Math.round(size * 2.7)}px`,
+        }}>
+          {/* CUBE — preserve-3d, transform owned imperatively */}
           <div
             ref={cubeRef}
             style={{
+              position: 'relative',
               width: '100%', height: '100%',
               transformStyle: 'preserve-3d',
-              transform: `rotateX(${accX.current}deg) rotateY(${accY.current}deg) rotateZ(${accZ.current}deg)`,
-              filter: disabled ? 'grayscale(0.5) opacity(0.35)' : 'none',
+              WebkitTransformStyle: 'preserve-3d',
+              filter: disabled ? 'grayscale(0.45) opacity(0.4)' : 'none',
             }}
           >
-            {([1, 2, 3, 4, 5, 6] as const).map(faceVal => {
-              const dots  = DOT_LAYOUTS[faceVal] || [];
-              const isSix = faceVal === 6;
+            {([1, 2, 3, 4, 5, 6] as const).map(fv => {
+              const isSix = fv === 6;
               return (
-                <div key={faceVal} style={{
+                <div key={fv} style={{
                   position: 'absolute', inset: 0,
-                  transform: faceTx[faceVal],
+                  transform: faceTransform[fv],
+                  transformStyle: 'preserve-3d',
+                  WebkitTransformStyle: 'preserve-3d',
                   backfaceVisibility: 'hidden',
                   WebkitBackfaceVisibility: 'hidden',
-                  borderRadius: Math.round(size * 0.16) + 'px',
+                  borderRadius: radius,
                   background: isSix
-                    ? 'linear-gradient(145deg, #fffef0 0%, #fef9d7 40%, #fef3c7 100%)'
-                    : 'linear-gradient(145deg, #ffffff 0%, #f3f7fb 60%, #e8f0f8 100%)',
+                    ? 'linear-gradient(135deg,#fffdf2 0%,#fef3c7 55%,#fde68a 100%)'
+                    : 'linear-gradient(135deg,#ffffff 0%,#eef4fb 55%,#dfe9f5 100%)',
                   border: isSix
-                    ? '1.5px solid rgba(217,119,6,0.38)'
-                    : '1.5px solid rgba(182,204,228,0.92)',
+                    ? '1.5px solid rgba(217,119,6,0.40)'
+                    : '1.5px solid rgba(170,196,224,0.95)',
                   boxShadow: isSix
-                    ? 'inset 2px 3px 8px rgba(255,255,255,0.92), inset -2px -3px 9px rgba(161,79,0,0.14)'
-                    : 'inset 2px 3px 8px rgba(255,255,255,0.97), inset -2px -3px 9px rgba(0,0,0,0.10)',
+                    ? 'inset 3px 4px 10px rgba(255,255,255,0.95), inset -4px -5px 12px rgba(161,79,0,0.16)'
+                    : 'inset 3px 4px 10px rgba(255,255,255,0.98), inset -4px -5px 12px rgba(15,40,75,0.14)',
                 }}>
-                  <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ padding: '13%' }}>
-                    {dots.map(([cx, cy], i) => (
-                      <circle key={i} cx={cx} cy={cy} r="10"
+                  <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ padding: '14%' }}>
+                    {DOT[fv].map(([cx, cy], i) => (
+                      <circle key={i} cx={cx} cy={cy} r="10.5"
                         fill={isSix ? '#92400e' : '#1e293b'} />
                     ))}
                   </svg>
@@ -244,45 +301,27 @@ export const Dice: React.FC<Props> = ({
               );
             })}
           </div>
-
-          {/* Pulse ring — awaiting roll */}
-          {!disabled && !value && !rolling && (
-            <motion.div className="absolute border-2 border-indigo-500/40 pointer-events-none"
-              style={{ inset: -4, borderRadius: Math.round(size * 0.2) + 'px' }}
-              animate={{ scale: [1, 1.12, 1], opacity: [0.7, 0.1, 0.7] }}
-              transition={{ repeat: Infinity, duration: 2.2 }}
-            />
-          )}
-        </motion.div>
+        </div>
       </div>
 
-      {/* Label */}
-      <AnimatePresence mode="wait">
-        {!disabled && !value && !rolling && (
-          <motion.span key="hint"
-            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-            className="text-[10px] font-black text-indigo-400 tracking-widest uppercase bg-indigo-950/40 border border-indigo-500/20 px-2.5 py-0.5 rounded-full"
-          >
+      {/* Label — plain DOM, never part of the 3D chain */}
+      <div style={{ minHeight: 20, display: 'flex', alignItems: 'center' }}>
+        {interactive && value === null && (
+          <span className="text-[10px] font-black text-indigo-400 tracking-widest uppercase bg-indigo-950/40 border border-indigo-500/20 px-2.5 py-0.5 rounded-full">
             Tap to Roll
-          </motion.span>
+          </span>
         )}
         {rolling && (
-          <motion.span key="rolling"
-            animate={{ opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 0.55 }}
-            className="text-[10px] font-black text-slate-500 tracking-widest uppercase"
-          >
+          <span className="dice-blink text-[10px] font-black text-slate-500 tracking-widest uppercase">
             Rolling…
-          </motion.span>
+          </span>
         )}
         {!rolling && value !== null && (
-          <motion.span key={`v${value}`}
-            initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
-            className={`text-xs font-black tracking-wide ${value === 6 ? 'text-yellow-400' : 'text-slate-300'}`}
-          >
+          <span className={`text-xs font-black tracking-wide ${value === 6 ? 'text-yellow-400' : 'text-slate-300'}`}>
             {value === 6 ? '🎉 SIX!' : `Rolled ${value}`}
-          </motion.span>
+          </span>
         )}
-      </AnimatePresence>
+      </div>
     </div>
   );
 };
