@@ -14,7 +14,7 @@
  * drizzle-kit / migrations needed for M1 — schema is ensured idempotently.
  */
 import { neon } from '@neondatabase/serverless';
-import { GameState } from '../types/game';
+import { GameState, Profile } from '../types/game';
 
 const URL = process.env.DATABASE_URL;
 export const persistenceEnabled = !!URL;
@@ -52,6 +52,16 @@ export async function ensureSchema(): Promise<void> {
         status      TEXT NOT NULL DEFAULT 'WAITING',
         game_state  JSONB NOT NULL,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL DEFAULT '',
+        avatar      TEXT NOT NULL DEFAULT '',
+        wins        INTEGER NOT NULL DEFAULT 0,
+        games       INTEGER NOT NULL DEFAULT 0,
         updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `;
@@ -117,5 +127,67 @@ export async function loadActiveRooms(): Promise<GameState[]> {
   } catch (e) {
     console.error('[persistence] loadActiveRooms failed:', e);
     return [];
+  }
+}
+
+// ─── User profiles + stats ────────────────────────────────────────────────────
+
+export async function getUser(id: string): Promise<Profile | null> {
+  if (disabled || !sql) return null;
+  try {
+    const rows = await sql`
+      SELECT id, name, avatar, wins, games FROM users WHERE id = ${id}
+    ` as Profile[];
+    return rows[0] ?? null;
+  } catch (e) {
+    console.error('[persistence] getUser failed:', e);
+    return null;
+  }
+}
+
+/** Upsert name/avatar WITHOUT touching accumulated stats. Returns the row. */
+export async function upsertUserProfile(
+  id: string, name: string, avatar: string,
+): Promise<Profile | null> {
+  if (disabled || !sql) return null;
+  try {
+    const rows = await sql`
+      INSERT INTO users (id, name, avatar, updated_at)
+      VALUES (${id}, ${name}, ${avatar}, now())
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        avatar = EXCLUDED.avatar,
+        updated_at = now()
+      RETURNING id, name, avatar, wins, games
+    ` as Profile[];
+    return rows[0] ?? null;
+  } catch (e) {
+    console.error('[persistence] upsertUserProfile failed:', e);
+    return null;
+  }
+}
+
+/** +1 game for every human player, +1 win for the winner. Idempotent rows. */
+export async function recordGameResult(
+  humanIds: string[], winnerId: string | null,
+): Promise<void> {
+  if (disabled || !sql) return;
+  try {
+    for (const id of humanIds) {
+      await sql`
+        INSERT INTO users (id, games) VALUES (${id}, 1)
+        ON CONFLICT (id) DO UPDATE SET
+          games = users.games + 1, updated_at = now()
+      `;
+    }
+    if (winnerId) {
+      await sql`
+        INSERT INTO users (id, wins) VALUES (${winnerId}, 1)
+        ON CONFLICT (id) DO UPDATE SET
+          wins = users.wins + 1, updated_at = now()
+      `;
+    }
+  } catch (e) {
+    console.error('[persistence] recordGameResult failed:', e);
   }
 }

@@ -61,3 +61,11 @@ export interface RoomMetadata {
   hostId: string;
   createdAt: number;
 }
+
+export interface Profile {
+  id: string;
+  name: string;
+  avatar: string; // emoji
+  wins: number;
+  games: number;
+}

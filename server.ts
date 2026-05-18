@@ -5,10 +5,13 @@ import { Server } from "socket.io";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { ClientToServerEvents, ServerToClientEvents } from "./src/types/socket";
-import { PlayerColor, GameState, Player } from "./src/types/game";
+import { PlayerColor, GameState, Player, Profile } from "./src/types/game";
 import { RoomManager } from "./src/lib/roomManager";
 import { LudoEngine } from "./src/lib/engine";
-import { ensureSchema, loadActiveRooms } from "./src/lib/persistence";
+import {
+  ensureSchema, loadActiveRooms,
+  getUser, upsertUserProfile, recordGameResult,
+} from "./src/lib/persistence";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -38,6 +41,19 @@ async function startServer() {
   const turnTimers  = new Map<string, ReturnType<typeof setTimeout>>(); // key roomId
   const graceTimers = new Map<string, ReturnType<typeof setTimeout>>(); // key userId
   const botRunning  = new Set<string>();                                // key roomId
+  const profiles      = new Map<string, { name: string; avatar: string }>(); // DB-less fallback cache
+  const statsRecorded = new Set<string>();                                   // roomId → result counted
+
+  const buildProfile = async (userId: string): Promise<Profile> => {
+    const db = await getUser(userId);
+    if (db) return db;
+    const c = profiles.get(userId);
+    return { id: userId, name: c?.name ?? '', avatar: c?.avatar ?? '', wins: 0, games: 0 };
+  };
+  const emitProfileTo = async (userId: string) => {
+    const sid = userToSocket.get(userId);
+    if (sid) io.to(sid).emit("profile:state", await buildProfile(userId));
+  };
 
   const clearTurnTimer = (roomId: string) => {
     const t = turnTimers.get(roomId);
@@ -62,6 +78,16 @@ async function startServer() {
     if (room.status !== "PLAYING") {
       room.turnDeadline = null;
       emitOnly(room);
+      if (room.status === "FINISHED" && !statsRecorded.has(room.roomId)) {
+        statsRecorded.add(room.roomId);
+        const humans = room.players.filter(p => !p.isAI);
+        const humanIds = humans.map(p => p.id);
+        const winner = humans.find(p => p.name === room.winner) ?? null;
+        void (async () => {
+          await recordGameResult(humanIds, winner ? winner.id : null);
+          for (const id of humanIds) await emitProfileTo(id);
+        })();
+      }
       return;
     }
 
@@ -204,6 +230,12 @@ async function startServer() {
     }
   };
 
+  const purge = (roomId: string) => {
+    clearTurnTimer(roomId);
+    statsRecorded.delete(roomId);
+    RoomManager.deleteRoom(roomId);
+  };
+
   // ── Idle room garbage collection (prevents unbounded memory growth) ─────────
   setInterval(() => {
     const now = Date.now();
@@ -211,14 +243,11 @@ async function startServer() {
       const idle = now - RoomManager.lastActivity(room.roomId);
       const anyConnected = room.players.some(p => !p.isAI && userToSocket.has(p.id));
       if (room.status === "FINISHED" && idle > 10 * 60 * 1000) {
-        clearTurnTimer(room.roomId);
-        RoomManager.deleteRoom(room.roomId);
+        purge(room.roomId);
       } else if (!anyConnected && idle > 30 * 60 * 1000) {
-        clearTurnTimer(room.roomId);
-        RoomManager.deleteRoom(room.roomId);
+        purge(room.roomId);
       } else if (idle > 6 * 60 * 60 * 1000) {
-        clearTurnTimer(room.roomId);
-        RoomManager.deleteRoom(room.roomId);
+        purge(room.roomId);
       }
     }
     const all = RoomManager.getAll();
@@ -227,7 +256,7 @@ async function startServer() {
         .map(r => ({ id: r.roomId, a: RoomManager.lastActivity(r.roomId) }))
         .sort((x, y) => x.a - y.a)
         .slice(0, all.length - MAX_ROOMS)
-        .forEach(({ id }) => { clearTurnTimer(id); RoomManager.deleteRoom(id); });
+        .forEach(({ id }) => purge(id));
     }
   }, SWEEP_MS);
 
@@ -243,6 +272,8 @@ async function startServer() {
       const grace = graceTimers.get(userId);
       if (grace) { clearTimeout(grace); graceTimers.delete(userId); }
 
+      void emitProfileTo(userId);
+
       const room = RoomManager.getRoomByPlayer(userId);
       if (room) {
         socket.join(room.roomId);
@@ -252,6 +283,18 @@ async function startServer() {
         if (room.status === "PLAYING") scheduleAfter(room);
         console.log(`User ${userId} re-authenticated on socket ${socket.id}`);
       }
+    });
+
+    socket.on("profile:update", ({ name, avatar }) => {
+      const userId = getUserId(socket.id);
+      if (!userId) return;
+      const cleanName   = (typeof name   === "string" ? name   : "").trim().slice(0, 24);
+      const cleanAvatar = (typeof avatar === "string" ? avatar : "").slice(0, 8);
+      profiles.set(userId, { name: cleanName, avatar: cleanAvatar });
+      void (async () => {
+        await upsertUserProfile(userId, cleanName, cleanAvatar);
+        await emitProfileTo(userId);
+      })();
     });
 
     socket.on("room:create", ({ name, userId }) => {
@@ -462,6 +505,7 @@ async function startServer() {
       const room = RoomManager.getRoomByPlayer(userId);
       if (room && room.status === "FINISHED") {
         clearTurnTimer(room.roomId);
+        statsRecorded.delete(room.roomId);
         room.status = "WAITING";
         room.winner = null;
         room.diceValue = null;
