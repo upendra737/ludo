@@ -1,12 +1,13 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface Props {
   value: number | null;
+  rolling: boolean;
   onClick: () => void;
   disabled: boolean;
-  isRolling: boolean;
-  size?: number; // cube edge length in px, default 108
+  onSettled: (value: number) => void;
+  size?: number;
 }
 
 const DOT_LAYOUTS: Record<number, [number, number][]> = {
@@ -18,22 +19,24 @@ const DOT_LAYOUTS: Record<number, [number, number][]> = {
   6: [[28, 22], [72, 22], [28, 50], [72, 50], [28, 78], [72, 78]],
 };
 
-// Cube rotation that brings each face value to face the viewer
 const VALUE_TO_ROT: Record<number, { x: number; y: number }> = {
-  1: { x: 0,   y: 0   },  // front
-  6: { x: 0,   y: 180 },  // back
-  3: { x: 0,   y: -90 },  // right face rotated left
-  4: { x: 0,   y: 90  },  // left face rotated right
-  2: { x: 90,  y: 0   },  // top face rotated down
-  5: { x: -90, y: 0   },  // bottom face rotated up
+  1: { x: 0,   y: 0   },
+  6: { x: 0,   y: 180 },
+  3: { x: 0,   y: -90 },
+  4: { x: 0,   y: 90  },
+  2: { x: 90,  y: 0   },
+  5: { x: -90, y: 0   },
 };
 
+// Total roll experience: MIN_TUMBLE_MS + SETTLE_DURATION_MS ≈ 580ms
+const MIN_TUMBLE_MS     = 300;
+const SETTLE_DURATION_MS = 280;
+
 export const Dice: React.FC<Props> = ({
-  value, onClick, disabled, isRolling, size = 108,
+  value, rolling, onClick, disabled, onSettled, size = 108,
 }) => {
   const half = Math.floor(size / 2);
 
-  // Each face's CSS 3D position — translateZ = half the cube edge length
   const faceTx: Record<number, string> = {
     1: `rotateY(0deg)   translateZ(${half}px)`,
     6: `rotateY(180deg) translateZ(${half}px)`,
@@ -43,11 +46,13 @@ export const Dice: React.FC<Props> = ({
     5: `rotateX(90deg)  translateZ(${half}px)`,
   };
 
-  const cubeRef  = useRef<HTMLDivElement>(null);
-  const accX     = useRef(-20);
-  const accY     = useRef(25);
-  const accZ     = useRef(8);   // small constant Z tilt makes resting die look natural
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cubeRef      = useRef<HTMLDivElement>(null);
+  const accX         = useRef(-20);
+  const accY         = useRef(25);
+  const accZ         = useRef(8);
+  const rafRef       = useRef<number | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const settledRef   = useRef(false);
   const [showGlow, setShowGlow] = React.useState(false);
 
   const applyTransform = (x: number, y: number, z: number, transition: string) => {
@@ -57,65 +62,106 @@ export const Dice: React.FC<Props> = ({
       `rotateX(${x}deg) rotateY(${y}deg) rotateZ(${z}deg)`;
   };
 
-  useEffect(() => {
-    if (isRolling) {
-      setShowGlow(false);
+  const settle = useCallback((val: number) => {
+    if (settledRef.current) return;
+    settledRef.current = true;
 
-      timerRef.current = setInterval(() => {
-        // Bias slightly positive so the cube tumbles forward on average
-        accX.current += (Math.random() - 0.38) * 170;
-        accY.current += (Math.random() - 0.38) * 170;
-        // Z oscillates slowly — keeps cube from ever going perfectly edge-on
-        accZ.current += (Math.random() - 0.5) * 35;
-        applyTransform(accX.current, accY.current, accZ.current, 'transform 0.06s linear');
-      }, 60);
-
-    } else {
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-
-      if (value !== null) {
-        const target = VALUE_TO_ROT[value];
-
-        // ── Forward-only settlement ────────────────────────────────────────
-        // Normalise current rotation to [0, 360) so delta is unambiguous
-        const curX = ((accX.current % 360) + 360) % 360;
-        const curY = ((accY.current % 360) + 360) % 360;
-
-        // How many degrees FORWARD to reach target (always 0–359)
-        const tgtX = ((target.x % 360) + 360) % 360;
-        const tgtY = ((target.y % 360) + 360) % 360;
-        const fwdX = ((tgtX - curX) + 360) % 360;
-        const fwdY = ((tgtY - curY) + 360) % 360;
-
-        // Land on target + 2 full extra spins for drama
-        const newX = accX.current + fwdX + 720;
-        const newY = accY.current + fwdY + 720;
-        const newZ = 0; // snap Z back to upright at rest
-
-        accX.current = newX;
-        accY.current = newY;
-        accZ.current = newZ;
-
-        applyTransform(newX, newY, newZ, 'transform 0.95s cubic-bezier(0.22,1.2,0.36,1)');
-        setTimeout(() => setShowGlow(value === 6), 750);
-      }
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
     }
 
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [isRolling, value]);
+    const target = VALUE_TO_ROT[val];
+    const curX = ((accX.current % 360) + 360) % 360;
+    const curY = ((accY.current % 360) + 360) % 360;
+    const tgtX = ((target.x % 360) + 360) % 360;
+    const tgtY = ((target.y % 360) + 360) % 360;
+    const fwdX = ((tgtX - curX) + 360) % 360;
+    const fwdY = ((tgtY - curY) + 360) % 360;
+    const newX = accX.current + fwdX + 720;
+    const newY = accY.current + fwdY + 720;
+
+    accX.current = newX;
+    accY.current = newY;
+    accZ.current = 0;
+
+    applyTransform(newX, newY, 0,
+      `transform ${SETTLE_DURATION_MS}ms cubic-bezier(0.25,1.4,0.4,1)`);
+
+    const cube = cubeRef.current;
+    if (!cube) {
+      setShowGlow(val === 6);
+      onSettled(val);
+      return;
+    }
+
+    const onEnd = (e: TransitionEvent) => {
+      if (e.propertyName !== 'transform') return;
+      cube.removeEventListener('transitionend', onEnd);
+      setShowGlow(val === 6);
+      onSettled(val);
+    };
+    cube.addEventListener('transitionend', onEnd);
+  }, [onSettled]);
+
+  // RAF tumble — runs while rolling=true
+  useEffect(() => {
+    if (!rolling) return;
+
+    settledRef.current = false;
+    startTimeRef.current = performance.now();
+    setShowGlow(false);
+
+    const tumble = () => {
+      // ~45° max per frame at 60fps ≈ same average velocity as 170° per 60ms interval
+      accX.current += (Math.random() - 0.38) * 45;
+      accY.current += (Math.random() - 0.38) * 45;
+      accZ.current += (Math.random() - 0.5)  * 10;
+      applyTransform(accX.current, accY.current, accZ.current, 'none');
+      rafRef.current = requestAnimationFrame(tumble);
+    };
+    rafRef.current = requestAnimationFrame(tumble);
+
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [rolling]);
+
+  // Settle once value arrives — waits for MIN_TUMBLE if server responds too fast
+  useEffect(() => {
+    if (!rolling || value === null) return;
+
+    const elapsed   = performance.now() - startTimeRef.current;
+    const remaining = MIN_TUMBLE_MS - elapsed;
+
+    if (remaining <= 0) {
+      settle(value);
+    } else {
+      const t = setTimeout(() => settle(value), remaining);
+      return () => clearTimeout(t);
+    }
+  }, [rolling, value, settle]);
+
+  // Reset settled guard when a new roll cycle begins
+  useEffect(() => {
+    if (!rolling && value === null) settledRef.current = false;
+  }, [rolling, value]);
 
   return (
     <div className="flex flex-col items-center gap-3">
-      {/* Perspective wrapper — tighter perspective = more dramatic 3D */}
+      {/* Perspective wrapper */}
       <div style={{ perspective: `${size * 4.5}px`, perspectiveOrigin: '50% 35%' }}>
         <motion.div
           style={{ position: 'relative', width: size, height: size }}
-          whileHover={!disabled && !isRolling ? { scale: 1.07 } : {}}
-          whileTap={!disabled && !isRolling ? { scale: 0.90 } : {}}
-          onClick={!disabled && !isRolling ? onClick : undefined}
-          className={!disabled && !isRolling ? 'cursor-pointer select-none' : 'cursor-not-allowed select-none'}
+          whileHover={!disabled && !rolling ? { scale: 1.07 } : {}}
+          whileTap={!disabled && !rolling ? { scale: 0.90 } : {}}
+          onClick={!disabled && !rolling ? onClick : undefined}
+          className={!disabled && !rolling ? 'cursor-pointer select-none' : 'cursor-not-allowed select-none'}
         >
-          {/* Drop-shadow beneath cube for grounding */}
+          {/* Ground shadow */}
           <div className="absolute pointer-events-none" style={{
             bottom: -12, left: '12%', width: '76%', height: 14,
             background: 'rgba(0,0,0,0.50)',
@@ -165,7 +211,6 @@ export const Dice: React.FC<Props> = ({
                   border: isSix
                     ? '1.5px solid rgba(217,119,6,0.38)'
                     : '1.5px solid rgba(182,204,228,0.92)',
-                  // Inset highlight top-left, shadow bottom-right → bevel feel
                   boxShadow: isSix
                     ? 'inset 2px 3px 8px rgba(255,255,255,0.92), inset -2px -3px 9px rgba(161,79,0,0.14)'
                     : 'inset 2px 3px 8px rgba(255,255,255,0.97), inset -2px -3px 9px rgba(0,0,0,0.10)',
@@ -181,8 +226,8 @@ export const Dice: React.FC<Props> = ({
             })}
           </div>
 
-          {/* Pulse ring while awaiting roll */}
-          {!disabled && !value && !isRolling && (
+          {/* Pulse ring — awaiting roll */}
+          {!disabled && !value && !rolling && (
             <motion.div className="absolute border-2 border-indigo-500/40 pointer-events-none"
               style={{ inset: -4, borderRadius: Math.round(size * 0.2) + 'px' }}
               animate={{ scale: [1, 1.12, 1], opacity: [0.7, 0.1, 0.7] }}
@@ -194,7 +239,7 @@ export const Dice: React.FC<Props> = ({
 
       {/* Label */}
       <AnimatePresence mode="wait">
-        {!disabled && !value && !isRolling && (
+        {!disabled && !value && !rolling && (
           <motion.span key="hint"
             initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
             className="text-[10px] font-black text-indigo-400 tracking-widest uppercase bg-indigo-950/40 border border-indigo-500/20 px-2.5 py-0.5 rounded-full"
@@ -202,7 +247,7 @@ export const Dice: React.FC<Props> = ({
             Tap to Roll
           </motion.span>
         )}
-        {isRolling && (
+        {rolling && (
           <motion.span key="rolling"
             animate={{ opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 0.55 }}
             className="text-[10px] font-black text-slate-500 tracking-widest uppercase"
@@ -210,7 +255,7 @@ export const Dice: React.FC<Props> = ({
             Rolling…
           </motion.span>
         )}
-        {!isRolling && value !== null && (
+        {!rolling && value !== null && (
           <motion.span key={`v${value}`}
             initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
             className={`text-xs font-black tracking-wide ${value === 6 ? 'text-yellow-400' : 'text-slate-300'}`}

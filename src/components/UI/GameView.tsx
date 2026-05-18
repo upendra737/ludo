@@ -130,15 +130,15 @@ const PlayerCard: React.FC<PlayerCardProps> = ({ player, isActive, isMe, compact
 export const GameView: React.FC = () => {
   const { gameState, me: myInitial } = useGameStore();
   const { rollDice, moveToken, sendChat, sendEmoji, leaveRoom, restartGame } = useSocket();
-  const { playSound, stopSound } = useSounds();
+  const { playSound } = useSounds();
   const {
     masterVolume, isMuted, sfxEnabled, musicEnabled, theme,
     setMasterVolume, toggleMute, toggleSFX, toggleMusic, toggleTheme,
   } = useSettingsStore();
 
-  const [isRollingLocal, setIsRollingLocal] = useState(false);
-  const [lastDiceValue,  setLastDiceValue]  = useState<number | null>(null);
+  const [rolling,        setRolling]        = useState(false);
   const [isChatOpen,     setIsChatOpen]     = useState(false);
+  const settledCalledRef = useRef(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [chatText,       setChatText]       = useState('');
   const [showCopyOk,     setShowCopyOk]     = useState(false);
@@ -154,12 +154,12 @@ export const GameView: React.FC = () => {
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [gameState?.messages]);
 
+  // Rattle loop during roll — cleared when onSettled fires
   useEffect(() => {
-    if (gameState?.diceValue != null) {
-      setLastDiceValue(gameState.diceValue);
-      if (gameState.diceValue === 6) playSound('SIX');
-    }
-  }, [gameState?.diceValue]);
+    if (!rolling) return;
+    const id = setInterval(() => playSound('ROLL_SHAKE', 0), 260);
+    return () => clearInterval(id);
+  }, [rolling, playSound]);
 
   useEffect(() => {
     if (gameState?.winner) {
@@ -176,21 +176,21 @@ export const GameView: React.FC = () => {
   const isMyTurn      = currentPlayer.id === me.id;
 
   const canMoveToken = (tokenId: string) => {
-    if (!isMyTurn || gameState.diceValue == null) return false;
+    if (!isMyTurn || gameState.diceValue == null || rolling) return false;
     const token = currentPlayer.tokens.find(t => t.id === tokenId);
     return token ? LudoEngine.canMove(token, gameState.diceValue!, me.color) : false;
   };
 
-  // Auto-move when only one valid option
+  // Auto-move when only one valid option — guarded by !rolling so it never fires mid-animation
   useEffect(() => {
-    if (!isRollingLocal && isMyTurn && gameState.diceValue != null && !gameState.winner) {
+    if (!rolling && isMyTurn && gameState.diceValue != null && !gameState.winner) {
       const moves = LudoEngine.getPossibleMoves(currentPlayer.tokens, gameState.diceValue);
       if (moves.length === 1) {
-        const t = setTimeout(() => handleTokenMove(moves[0].id), 650);
+        const t = setTimeout(() => handleTokenMove(moves[0].id), 400);
         return () => clearTimeout(t);
       }
     }
-  }, [isRollingLocal, gameState.diceValue, isMyTurn, gameState.winner]);
+  }, [rolling, gameState.diceValue, isMyTurn, gameState.winner]);
 
   // Space bar to roll
   useEffect(() => {
@@ -202,18 +202,25 @@ export const GameView: React.FC = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isMyTurn, gameState?.diceValue, isRollingLocal]);
+  }, [isMyTurn, gameState?.diceValue, rolling]);
 
   const handleRoll = useCallback(() => {
-    if (!isMyTurn || gameState?.diceValue != null || isRollingLocal) return;
-    setIsRollingLocal(true);
+    if (!isMyTurn || gameState?.diceValue != null || rolling) return;
+    settledCalledRef.current = false;
+    setRolling(true);
     playSound('ROLL_SHAKE');
     rollDice();
-    setTimeout(() => {
-      setIsRollingLocal(false);
-      playSound('ROLL_LAND');
-    }, 1400);
-  }, [isMyTurn, gameState?.diceValue, isRollingLocal]);
+    // No setTimeout — Dice calls onSettled via transitionend when animation completes
+  }, [isMyTurn, gameState?.diceValue, rolling, playSound, rollDice]);
+
+  const handleDiceSettled = useCallback((val: number) => {
+    // Guard: both Dice instances (mobile+desktop) share this callback — only process once
+    if (settledCalledRef.current) return;
+    settledCalledRef.current = true;
+    setRolling(false);
+    playSound('ROLL_LAND');
+    if (val === 6) playSound('SIX');
+  }, [playSound]);
 
   const handleTokenMove = (tokenId: string) => {
     if (isMyTurn && gameState.diceValue != null) {
@@ -352,10 +359,11 @@ export const GameView: React.FC = () => {
             <div className="shrink-0">
               <Dice
                 size={diceSize}
-                value={isRollingLocal ? null : (gameState.diceValue ?? lastDiceValue)}
-                isRolling={isRollingLocal}
+                value={gameState.diceValue}
+                rolling={rolling}
                 disabled={!isMyTurn || gameState.diceValue !== null}
                 onClick={handleRoll}
+                onSettled={handleDiceSettled}
               />
             </div>
 
@@ -388,10 +396,11 @@ export const GameView: React.FC = () => {
             <div className="flex justify-center">
               <Dice
                 size={diceSize}
-                value={isRollingLocal ? null : (gameState.diceValue ?? lastDiceValue)}
-                isRolling={isRollingLocal}
+                value={gameState.diceValue}
+                rolling={rolling}
                 disabled={!isMyTurn || gameState.diceValue !== null}
                 onClick={handleRoll}
+                onSettled={handleDiceSettled}
               />
             </div>
             <p className="text-[9px] text-slate-600 font-medium text-center">Space to roll</p>
