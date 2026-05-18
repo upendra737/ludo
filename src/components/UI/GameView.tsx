@@ -41,6 +41,54 @@ const EMOJIS: { emoji: string; label: string; sound: SoundType }[] = [
   { emoji: '😡', label: 'Angry',  sound: 'EMOJI_ANGRY' },
 ];
 
+// ─── TurnCountdown ────────────────────────────────────────────────────────────
+// Circular ring + seconds for the server-armed turn clock (GameState.turnDeadline).
+// Shown for the active human's turn on every client (bots get no deadline).
+
+const TurnCountdown: React.FC<{ deadline: number }> = ({ deadline }) => {
+  const [now, setNow] = useState(() => Date.now());
+  const totalRef = useRef(Math.max(1, deadline - Date.now()));
+
+  useEffect(() => {
+    // New turn → normalise the ring so it always starts ~full regardless of
+    // the server's TURN_MS value.
+    totalRef.current = Math.max(1, deadline - Date.now());
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 200);
+    return () => clearInterval(id);
+  }, [deadline]);
+
+  const remaining = Math.max(0, deadline - now);
+  const secs = Math.ceil(remaining / 1000);
+  const frac = Math.max(0, Math.min(1, remaining / totalRef.current));
+
+  const R = 9;
+  const C = 2 * Math.PI * R;
+  const urgent = secs <= 5;
+  const color = secs > 10 ? '#818cf8' : secs > 5 ? '#fbbf24' : '#f87171';
+
+  return (
+    <motion.div
+      className="relative flex items-center justify-center shrink-0"
+      style={{ width: 26, height: 26 }}
+      animate={urgent ? { scale: [1, 1.12, 1] } : { scale: 1 }}
+      transition={urgent ? { repeat: Infinity, duration: 0.7 } : { duration: 0.2 }}
+      role="timer"
+      aria-label={`${secs} seconds left in turn`}
+    >
+      <svg width="26" height="26" viewBox="0 0 26 26" className="absolute inset-0 -rotate-90">
+        <circle cx="13" cy="13" r={R} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="2.5" />
+        <circle
+          cx="13" cy="13" r={R} fill="none" stroke={color} strokeWidth="2.5"
+          strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C * (1 - frac)}
+          style={{ transition: 'stroke-dashoffset 0.2s linear, stroke 0.3s ease' }}
+        />
+      </svg>
+      <span className="text-[9px] font-black tabular-nums" style={{ color }}>{secs}</span>
+    </motion.div>
+  );
+};
+
 // ─── PlayerCard ───────────────────────────────────────────────────────────────
 
 interface PlayerCardProps {
@@ -282,6 +330,9 @@ export const GameView: React.FC = () => {
               <span className="text-xs font-black text-white">
                 {isMyTurn ? '✨ Your turn!' : `${currentPlayer.name}'s turn`}
               </span>
+              {gameState.turnDeadline && (
+                <TurnCountdown deadline={gameState.turnDeadline} />
+              )}
             </motion.div>
           )}
         </AnimatePresence>
