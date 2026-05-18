@@ -82,26 +82,65 @@ export const LudoBoard: React.FC<Props> = ({
     ]);
   };
 
-  // Capture & finish VFX
+  // ─── Token audio: per-tile hops, capture-kill, finish fanfare ───
   const prevTokensRef = useRef<Token[]>([]);
+  const stepTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearStepSounds = () => {
+    if (stepTimerRef.current) { clearInterval(stepTimerRef.current); stepTimerRef.current = null; }
+  };
+
+  // One crisp hop per tile, paced to match the Framer keyframe transit cadence.
+  const scheduleStepHops = (steps: number, totalMs: number) => {
+    clearStepSounds();
+    if (steps <= 0) return;
+    const gap = Math.max(70, totalMs / steps);
+    let fired = 1;
+    playSound('MOVE', 0); // first hop as the token lifts off
+    if (fired >= steps) return;
+    stepTimerRef.current = setInterval(() => {
+      playSound('MOVE', 0);
+      if (++fired >= steps) clearStepSounds();
+    }, gap);
+  };
+
   useEffect(() => {
     const current = players.flatMap(p => p.tokens);
     current.forEach(token => {
       const prev = prevTokensRef.current.find(t => t.id === token.id);
       if (!prev) return;
+
+      // Finished → celebratory burst
       if (token.isFinished && !prev.isFinished) {
         const c = getCellCoords(token.position, token.color as PlayerColor);
         if (c) spawnParticles(c.x * cellSize + cellSize / 2, c.y * cellSize + cellSize / 2, 'gold', 32);
         playSound('WIN');
+        return;
       }
+
+      // Captured (sent home) → instantly suppress in-flight hops, then impact + zip
       if (token.position < 0 && prev.position >= 0) {
+        clearStepSounds();
         const c = getCellCoords(prev.position, token.color as PlayerColor);
         if (c) spawnParticles(c.x * cellSize + cellSize / 2, c.y * cellSize + cellSize / 2, '#ef4444', 20);
         playSound('CAPTURE');
+        return;
+      }
+
+      // Forward transit → one hop per tile, matching the Framer transit duration
+      const entered  = prev.position < 0  && token.position >= 0;
+      const advanced = prev.position >= 0 && token.position > prev.position;
+      if (entered) {
+        scheduleStepHops(1, 200);
+      } else if (advanced) {
+        const steps = token.position - prev.position;
+        scheduleStepHops(steps, (steps + 1) * 130);
       }
     });
     prevTokensRef.current = current;
   }, [players]);
+
+  useEffect(() => () => clearStepSounds(), []);
 
   // Latest chat messages per sender (within 5s)
   const latestMessages = useMemo(() => {
@@ -357,7 +396,6 @@ export const LudoBoard: React.FC<Props> = ({
                 }}
                 onAnimationComplete={() => {
                   if (pathX.length > 1 && !token.isFinished) {
-                    playSound('MOVE');
                     const eff = {
                       id: Date.now().toString(),
                       x: coords.x * cellSize + cellSize / 2,

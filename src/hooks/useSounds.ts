@@ -165,6 +165,21 @@ const captureSound = (c: AudioContext, vol: number) => {
   b.frequency.exponentialRampToValueAtTime(40, t + 0.25);
   b.connect(bg); bg.connect(c.destination);
   b.start(t); b.stop(t + 0.27);
+
+  // High-velocity slide "zip" — the captured piece flung back to its nest
+  const zt = t + 0.05;
+  const z = osc(c, 'sawtooth', 1500);
+  z.frequency.exponentialRampToValueAtTime(170, zt + 0.20);
+  const zf = c.createBiquadFilter();
+  zf.type = 'bandpass';
+  zf.frequency.value = 900;
+  zf.Q.value = 1.4;
+  const zg = gain(c, 0);
+  zg.gain.setValueAtTime(0, zt);
+  zg.gain.linearRampToValueAtTime(vol * 0.32, zt + 0.02);
+  zg.gain.exponentialRampToValueAtTime(0.0001, zt + 0.22);
+  z.connect(zf); zf.connect(zg); zg.connect(c.destination);
+  z.start(zt); z.stop(zt + 0.24);
 };
 
 const winSound = (c: AudioContext, vol: number) => {

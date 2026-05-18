@@ -28,9 +28,9 @@ const VALUE_TO_ROT: Record<number, { x: number; y: number }> = {
   5: { x: -90, y: 0   },
 };
 
-// Total roll experience: MIN_TUMBLE_MS + SETTLE_DURATION_MS ≈ 580ms
-const MIN_TUMBLE_MS     = 300;
-const SETTLE_DURATION_MS = 280;
+// Total roll experience strictly capped: MIN_TUMBLE_MS + SETTLE_DURATION_MS = 440ms
+const MIN_TUMBLE_MS      = 200;
+const SETTLE_DURATION_MS = 240;
 
 export const Dice: React.FC<Props> = ({
   value, rolling, onClick, disabled, onSettled, size = 108,
@@ -151,11 +151,30 @@ export const Dice: React.FC<Props> = ({
   }, [rolling, value]);
 
   return (
-    <div className="flex flex-col items-center gap-3">
-      {/* Perspective wrapper */}
-      <div style={{ perspective: `${size * 4.5}px`, perspectiveOrigin: '50% 35%' }}>
+    <div
+      className="flex flex-col items-center gap-3"
+      style={{ position: 'relative', zIndex: 50, isolation: 'isolate' }}
+    >
+      {/*
+        Perspective wrapper — fixed 700px keeps the cube near-orthographic so it
+        never inverts, flattens, or vanishes at extreme tumble angles. Centered
+        origin = symmetric, stable rotation. Padding + overflow:visible give the
+        swept cube corners room so no ancestor clip ever crops it.
+      */}
+      <div style={{
+        perspective: '700px',
+        perspectiveOrigin: '50% 50%',
+        padding: Math.round(size * 0.14),
+        overflow: 'visible',
+      }}>
         <motion.div
-          style={{ position: 'relative', width: size, height: size }}
+          style={{
+            position: 'relative',
+            width: size,
+            height: size,
+            transformStyle: 'preserve-3d',
+            willChange: 'transform',
+          }}
           whileHover={!disabled && !rolling ? { scale: 1.07 } : {}}
           whileTap={!disabled && !rolling ? { scale: 0.90 } : {}}
           onClick={!disabled && !rolling ? onClick : undefined}

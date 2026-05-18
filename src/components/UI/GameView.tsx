@@ -154,10 +154,10 @@ export const GameView: React.FC = () => {
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [gameState?.messages]);
 
-  // Rattle loop during roll — cleared when onSettled fires
+  // Rattle loop during roll — dense cadence for the short 440ms roll; cleared when onSettled fires
   useEffect(() => {
     if (!rolling) return;
-    const id = setInterval(() => playSound('ROLL_SHAKE', 0), 260);
+    const id = setInterval(() => playSound('ROLL_SHAKE', 0), 130);
     return () => clearInterval(id);
   }, [rolling, playSound]);
 
@@ -224,7 +224,7 @@ export const GameView: React.FC = () => {
 
   const handleTokenMove = (tokenId: string) => {
     if (isMyTurn && gameState.diceValue != null) {
-      playSound('MOVE');
+      // Per-tile hop sounds are driven by the position diff in LudoBoard
       moveToken(tokenId);
     }
   };
