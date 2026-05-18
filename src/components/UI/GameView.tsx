@@ -192,6 +192,8 @@ export const GameView: React.FC = () => {
   const [showCopyOk,     setShowCopyOk]     = useState(false);
   const [activeTab,      setActiveTab]      = useState<'chat' | 'log'>('chat');
   const [diceSize,       setDiceSize]       = useState(() => window.innerWidth < 768 ? 70 : 90);
+  const [oppToast,       setOppToast]       = useState<string | null>(null);
+  const prevAiRef = useRef<Record<string, boolean>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -216,6 +218,22 @@ export const GameView: React.FC = () => {
         colors: ['#fa5252','#40c057','#fcc419','#339af0','#a855f7'] });
     }
   }, [gameState?.winner]);
+
+  // Opponent dropped → server converts them to AI after the grace window
+  useEffect(() => {
+    if (!gameState) return;
+    const prev = prevAiRef.current;
+    const next: Record<string, boolean> = {};
+    for (const p of gameState.players) {
+      next[p.id] = !!p.isAI;
+      if (prev[p.id] === false && p.isAI && p.id !== myInitial?.id && gameState.status === 'PLAYING') {
+        const nm = p.name.replace(/\s*🤖$/, '');
+        setOppToast(`${nm} disconnected — AI is taking over`);
+        window.setTimeout(() => setOppToast(null), 3500);
+      }
+    }
+    prevAiRef.current = next;
+  }, [gameState?.players]);
 
   if (!gameState || !myInitial) return null;
 
@@ -299,6 +317,19 @@ export const GameView: React.FC = () => {
   // ──────────────────────────────────────────────────────────────────────────
   return (
     <div className="game-root">
+
+      {/* Opponent-left toast */}
+      <AnimatePresence>
+        {oppToast && (
+          <motion.div key="opp"
+            initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}
+            className="fixed top-3 left-1/2 -translate-x-1/2 z-[150] px-4 py-2 rounded-full text-xs font-black text-amber-200 whitespace-nowrap"
+            style={{ background: 'rgba(180,83,9,0.35)', border: '1px solid rgba(251,191,36,0.4)', backdropFilter: 'blur(8px)' }}
+          >
+            {oppToast}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
       <header className="game-header">

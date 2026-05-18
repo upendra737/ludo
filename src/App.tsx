@@ -9,6 +9,7 @@ import { useSettingsStore } from './store/useSettingsStore';
 import { Lobby } from './components/UI/Lobby';
 import { WaitingRoom } from './components/UI/WaitingRoom';
 import { GameView } from './components/UI/GameView';
+import { ConnectionOverlay } from './components/UI/ConnectionOverlay';
 
 export default function App() {
   const { gameState, me } = useGameStore();
@@ -27,6 +28,7 @@ export default function App() {
       ) : (
         <GameView />
       )}
+      <ConnectionOverlay />
     </>
   );
 }
