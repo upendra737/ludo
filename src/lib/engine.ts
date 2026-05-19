@@ -37,37 +37,38 @@ export class LudoEngine {
   }
 
   /**
+   * Progress of a token measured from its OWN start square (0 = on the start
+   * square). 0..50 = on the 51-cell main-track portion; 51..56 = the 6 home
+   * cells (56 = centre / WINNING_POSITION 57). Single source of truth — every
+   * other method derives movement from this so the home turn-in can't drift.
+   */
+  private static stepsOf(position: number, color: PlayerColor): number {
+    if (position < 0) return -1;                       // in base
+    if (position >= 52) return 50 + (position - 51);   // 52→51 … 57→56 (centre)
+    const lapStart = START_POSITIONS[color];
+    return (position - lapStart + 52) % 52;             // 0..50 on main track
+  }
+
+  /** Inverse of stepsOf: total progress P (0..56) → board position. */
+  private static posFromSteps(color: PlayerColor, p: number): number {
+    if (p > 50) return 51 + (p - 50);                  // 51→52 … 56→57 (win)
+    const lapStart = START_POSITIONS[color];
+    return (lapStart + p) % 52;                          // turn into home after 51 cells
+  }
+
+  /**
    * Validates if a token can move the given number of steps
    */
   static canMove(token: Token, steps: number, color: PlayerColor): boolean {
     if (token.isFinished) return false;
-    
+
     // If in home base, need a 1 or 6 to start
     if (token.position < 0) {
       return steps === 1 || steps === 6;
     }
 
-    const currentPos = token.position;
-
-    // Boundary check for finish line
-    if (currentPos >= 52) {
-      return currentPos + steps <= WINNING_POSITION;
-    }
-
-    // Check if entering home stretch
-    const lapStart = START_POSITIONS[color];
-    let stepsTaken;
-    if (currentPos >= lapStart) {
-      stepsTaken = currentPos - lapStart;
-    } else {
-      stepsTaken = (52 - lapStart) + currentPos;
-    }
-
-    if (stepsTaken + steps > 57) { // 57 is the winning position
-      return false;
-    }
-
-    return true;
+    // Must land exactly on the centre — can't overshoot past P = 56.
+    return this.stepsOf(token.position, color) + steps <= 56;
   }
 
   /**
@@ -116,25 +117,11 @@ export class LudoEngine {
 
   private static simulateNextPos(token: Token, steps: number): number {
     if (token.position < 0) return START_POSITIONS[token.color];
-    
-    const lapStart = START_POSITIONS[token.color];
-    let stepsTaken = this.getStepsTaken(token);
-
-    if (stepsTaken + steps > 51) {
-      const homeSteps = (stepsTaken + steps) - 51;
-      return 51 + homeSteps;
-    } else {
-      return (token.position + steps) % 52;
-    }
+    return this.posFromSteps(token.color, this.stepsOf(token.position, token.color) + steps);
   }
 
   private static getStepsTaken(token: Token): number {
-    if (token.position < 0) return -1;
-    if (token.position >= 52) return 51 + (token.position - 52 + 1);
-    
-    const lapStart = START_POSITIONS[token.color];
-    if (token.position >= lapStart) return token.position - lapStart;
-    return (52 - lapStart) + token.position;
+    return this.stepsOf(token.position, token.color);
   }
 
   /**
@@ -168,27 +155,10 @@ export class LudoEngine {
       nextPosition = START_POSITIONS[token.color];
       newState.logs.push(`${currentPlayer.name} moved a token out of the base!`);
     } else {
-      const currentPos = token.position;
-      
-      const lapStart = START_POSITIONS[token.color];
-      let stepsTaken;
-      if (currentPos >= lapStart && currentPos < 52) {
-        stepsTaken = currentPos - lapStart;
-      } else if (currentPos < 52) {
-        stepsTaken = (52 - lapStart) + currentPos;
-      } else {
-        // Already in home stretch
-        stepsTaken = 51 + (currentPos - 52 + 1);
-      }
-
-      // Check if entering home stretch or moving within it
-      if (stepsTaken + steps > 51) {
-        const homeSteps = (stepsTaken + steps) - 51;
-        nextPosition = 51 + homeSteps;
-      } else {
-        nextPosition = (currentPos + steps) % 52;
-      }
-      
+      nextPosition = LudoEngine.posFromSteps(
+        token.color,
+        LudoEngine.stepsOf(token.position, token.color) + steps,
+      );
       newState.logs.push(`${currentPlayer.name} moved a token ${steps} steps.`);
     }
 
@@ -267,42 +237,12 @@ export class LudoEngine {
   static getPreviewPath(token: Token, steps: number, color: PlayerColor): number[] {
     if (!this.canMove(token, steps, color)) return [];
     
+    if (token.position < 0) return [START_POSITIONS[color]];
+
+    const base = this.stepsOf(token.position, color);
     const path: number[] = [];
-    if (token.position < 0) {
-      path.push(START_POSITIONS[color]);
-      return path;
-    }
-
-    const startPos = token.position;
-    const lapStart = START_POSITIONS[color];
-    
     for (let i = 1; i <= steps; i++) {
-      let currentStepPos;
-      
-      // Calculate steps taken at this specific point in the animation
-      let currentLapPos = (startPos + i - 1); // This simplified logic might match the board coordinates
-      
-      // We need a more accurate simulation of the step-by-step movement
-      // reuse engine logic but for 1 step at a time
-      let previewPos = startPos;
-      // This is slightly inefficient but ensures accuracy
-      for(let j = 1; j <= i; j++) {
-        let stepsTaken;
-        if (previewPos >= lapStart && previewPos < 52) {
-          stepsTaken = previewPos - lapStart;
-        } else if (previewPos < 52) {
-          stepsTaken = (52 - lapStart) + previewPos;
-        } else {
-          stepsTaken = 51 + (previewPos - 52);
-        }
-
-        if (stepsTaken >= 50) {
-          previewPos++; // Move forward in home stretch (51 -> 52, 52 -> 53...)
-        } else {
-          previewPos = (previewPos + 1) % 52;
-        }
-      }
-      path.push(previewPos);
+      path.push(this.posFromSteps(color, base + i));
     }
     return path;
   }
