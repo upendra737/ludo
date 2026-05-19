@@ -5,6 +5,7 @@ export interface ServerToClientEvents {
   'room:joined':      (data: { player: Player; roomState: GameState }) => void;
   'room:error':       (error: string) => void;
   'profile:state':    (profile: Profile) => void;
+  'matchmaking:status': (data: { searching: boolean; queued: number }) => void;
   'game:dice-rolled': (value: number) => void;
   'game:token-moved': (data: { tokenId: string; from: number; to: number }) => void;
   'game:capture':     (data: { capturedTokenId: string }) => void;
@@ -15,6 +16,8 @@ export interface ClientToServerEvents {
   'room:join':       (data: { code: string; name: string; userId: string }) => void;
   'room:auth':       (data: { userId: string }) => void;
   'profile:update':  (data: { name: string; avatar: string }) => void;
+  'matchmaking:join':   (data: { name: string }) => void;
+  'matchmaking:cancel': () => void;
   'room:leave':      () => void;
   'room:ready':      () => void;
   'room:pick-color': (data: { color: PlayerColor }) => void;

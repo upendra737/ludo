@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Users, AlertCircle, Dice6, Pencil, Trophy, Bot, ArrowLeft } from 'lucide-react';
+import { Play, Users, AlertCircle, Dice6, Pencil, Trophy, Bot, ArrowLeft, Zap, X } from 'lucide-react';
 import { useSocket } from '../../hooks/useSocket';
 import { useGameStore } from '../../store/useGameStore';
 import { useProfileStore, AVATARS } from '../../store/useProfileStore';
 
 export const Lobby: React.FC = () => {
   const { name, avatar, wins, games, hasIdentity, setIdentity } = useProfileStore();
-  const { createRoom, joinRoom, updateProfile } = useSocket();
-  const { error } = useGameStore();
+  const { createRoom, joinRoom, updateProfile, quickPlay, cancelQuick } = useSocket();
+  const { error, matchmaking } = useGameStore();
 
   const [editing,   setEditing]   = useState(!hasIdentity);
   const [draftName, setDraftName] = useState(name);
@@ -32,6 +32,7 @@ export const Lobby: React.FC = () => {
 
   const start      = (n: number) => { if (name.trim()) createRoom(name.trim(), n, mode === 'cpu'); };
   const handleJoin = () => { if (name.trim() && roomCode.trim()) joinRoom(roomCode.trim(), name.trim()); };
+  const handleQuick = () => { if (name.trim()) quickPlay(name.trim()); };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4"
@@ -43,6 +44,30 @@ export const Lobby: React.FC = () => {
         <div className="absolute bottom-1/4 right-1/4 w-72 h-72 rounded-full opacity-15"
              style={{ background: 'radial-gradient(circle,#a855f7,transparent)', filter: 'blur(60px)' }} />
       </div>
+
+      {/* Quick Play searching overlay */}
+      <AnimatePresence>
+        {matchmaking.searching && (
+          <motion.div key="mm"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex flex-col items-center justify-center gap-5 px-6 text-center"
+            style={{ background: 'rgba(8,11,20,0.88)', backdropFilter: 'blur(10px)' }}
+          >
+            <div className="w-14 h-14 rounded-full border-2 border-white/15 border-t-amber-400 animate-spin" />
+            <div>
+              <p className="text-base font-black text-white uppercase tracking-widest">Finding players…</p>
+              <p className="text-xs text-slate-400 font-medium mt-1">
+                {matchmaking.queued} in queue · bots fill in if needed
+              </p>
+            </div>
+            <button onClick={cancelQuick}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full text-xs font-black uppercase tracking-wide text-slate-300 transition-all active:scale-95"
+              style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}>
+              <X size={14} /> Cancel
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <motion.div
         initial={{ opacity: 0, y: 24, scale: 0.96 }}
@@ -146,6 +171,11 @@ export const Lobby: React.FC = () => {
                     <Pencil size={14} className="text-slate-500 group-hover:text-slate-300" />
                   </button>
 
+                  <button onClick={handleQuick}
+                    className="w-full py-4 rounded-2xl font-black text-sm uppercase tracking-wider text-white flex items-center justify-center gap-3 transition-all active:scale-95 hover:brightness-110"
+                    style={{ background: 'linear-gradient(135deg,#f59e0b,#f97316)', boxShadow: '0 8px 24px rgba(245,158,11,0.35)' }}>
+                    <Zap size={18} fill="currentColor" /> Quick Play
+                  </button>
                   <button onClick={() => { setMode('cpu'); setView('COUNT'); }}
                     className="w-full py-4 rounded-2xl font-black text-sm uppercase tracking-wider text-white flex items-center justify-center gap-3 transition-all active:scale-95 hover:brightness-110"
                     style={{ background: 'linear-gradient(135deg,#6366f1,#7c3aed)', boxShadow: '0 8px 24px rgba(99,102,241,0.35)' }}>

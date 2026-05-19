@@ -25,6 +25,8 @@ export const useSocket = () => {
   const createRoom  = (name: string, players = 4, vsCpu = false) => socket?.emit('room:create', { name, userId: getUserId(), players, vsCpu });
   const joinRoom    = (code: string, name: string)         => socket?.emit('room:join', { code, name, userId: getUserId() });
   const updateProfile = (name: string, avatar: string)    => socket?.emit('profile:update', { name, avatar });
+  const quickPlay   = (name: string)                       => socket?.emit('matchmaking:join', { name });
+  const cancelQuick = ()                                   => socket?.emit('matchmaking:cancel');
   const setReady    = ()                                   => socket?.emit('room:ready');
   const pickColor   = (color: PlayerColor)                 => socket?.emit('room:pick-color', { color });
   const addBot      = (count: number)                      => socket?.emit('room:add-bot', { count });
@@ -37,7 +39,7 @@ export const useSocket = () => {
   /** @deprecated use addBot */
   const fillBots    = ()                                   => socket?.emit('room:fill-bots');
 
-  return { socket, createRoom, joinRoom, updateProfile, setReady, pickColor, addBot, fillBots, rollDice, moveToken, sendChat, sendEmoji, leaveRoom, restartGame };
+  return { socket, createRoom, joinRoom, updateProfile, quickPlay, cancelQuick, setReady, pickColor, addBot, fillBots, rollDice, moveToken, sendChat, sendEmoji, leaveRoom, restartGame };
 };
 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -65,10 +67,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
     socket.on('connect_error', ()    => setError('Connection lost. Reconnecting…'));
     socket.on('disconnect',    ()    => setConnected(false));
-    socket.on('room:joined',   ({ player, roomState }) => { setMe(player); setGameState(roomState); setError(null); });
+    socket.on('room:joined',   ({ player, roomState }) => {
+      setMe(player); setGameState(roomState); setError(null);
+      useGameStore.getState().setMatchmaking({ searching: false, queued: 0 });
+    });
     socket.on('room:update',   state => setGameState(state));
     socket.on('room:error',    err   => setError(err));
     socket.on('profile:state', pf    => useProfileStore.getState().setStats(pf.wins, pf.games));
+    socket.on('matchmaking:status', st => useGameStore.getState().setMatchmaking(st));
 
     setInitialized(true);
     return () => { socket.disconnect(); socketRef.current = null; };

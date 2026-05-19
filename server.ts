@@ -104,6 +104,74 @@ async function startServer() {
     }
   };
 
+  // Fill remaining seats with bots, mark everyone ready, init tokens, go live.
+  const startFilledGame = (room: GameState, label: string) => {
+    const allColors: PlayerColor[] = ["RED", "GREEN", "YELLOW", "BLUE"];
+    const taken = room.players.map(p => p.color);
+    const avail = allColors.filter(c => !taken.includes(c));
+    const need = Math.max(0, room.targetPlayers - room.players.length);
+    for (let i = 0; i < need && i < avail.length; i++) {
+      const color = avail[i];
+      room.players.push({
+        id: `bot-${Math.random().toString(36).substr(2, 5)}`,
+        name: `${color[0]}${color.slice(1).toLowerCase()} Bot 🤖`,
+        color, isReady: true, tokens: [], isAI: true,
+      });
+    }
+    room.players.forEach(p => { p.isReady = true; });
+    room.status = "PLAYING";
+    room.players.forEach(p => {
+      p.tokens = Array.from({ length: 4 }).map((_, i) => ({
+        id: `${p.id}-token-${i}`, color: p.color, position: -(i + 1), isFinished: false,
+      }));
+    });
+    room.logs.push(label);
+  };
+
+  // ── Quick Play matchmaking ─────────────────────────────────────────────────
+  const MM_WAIT_MS = 8000;
+  const mmQueue: { userId: string; name: string }[] = [];
+  let   mmTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const mmStatus = (userId: string, searching: boolean) => {
+    const sid = userToSocket.get(userId);
+    if (sid) io.to(sid).emit("matchmaking:status", { searching, queued: mmQueue.length });
+  };
+  const mmRemove = (userId: string) => {
+    const i = mmQueue.findIndex(e => e.userId === userId);
+    if (i >= 0) mmQueue.splice(i, 1);
+  };
+  const mmBroadcast = () => { for (const e of mmQueue) mmStatus(e.userId, true); };
+
+  const formMatch = () => {
+    if (mmTimer) { clearTimeout(mmTimer); mmTimer = null; }
+    // prune entries whose socket is gone
+    for (const e of [...mmQueue]) if (!userToSocket.has(e.userId)) mmRemove(e.userId);
+    const humans = mmQueue.slice(0, 4);
+    if (humans.length === 0) return;
+    for (const h of humans) mmRemove(h.userId);
+
+    const host = humans[0];
+    const room = RoomManager.createRoom(host.name || "Player", host.userId, 4);
+    for (const h of humans.slice(1)) {
+      RoomManager.joinRoom(room.roomId, h.name || "Player", h.userId);
+    }
+    startFilledGame(room, "Quick match started!");
+
+    for (const h of humans) {
+      const sid = userToSocket.get(h.userId);
+      const sock = sid ? io.sockets.sockets.get(sid) : null;
+      const player = room.players.find(p => p.id === h.userId);
+      if (sock && player) {
+        sock.join(room.roomId);
+        sock.emit("room:joined", { player, roomState: room });
+      }
+      mmStatus(h.userId, false);
+    }
+    scheduleAfter(room);
+    mmBroadcast(); // refresh queued count for anyone still waiting
+  };
+
   /** Auto-plays a stalled human's turn exactly like a bot, then continues. */
   const handleTurnTimeout = (roomId: string) => {
     const room = RoomManager.getRoom(roomId);
@@ -306,31 +374,34 @@ async function startServer() {
       socket.join(room.roomId);
 
       if (vsCpu) {
-        const allColors: PlayerColor[] = ["RED", "GREEN", "YELLOW", "BLUE"];
-        const taken = room.players.map(p => p.color);
-        const avail = allColors.filter(c => !taken.includes(c));
-        const need = Math.max(0, room.targetPlayers - room.players.length);
-        for (let i = 0; i < need && i < avail.length; i++) {
-          const color = avail[i];
-          room.players.push({
-            id: `bot-${Math.random().toString(36).substr(2, 5)}`,
-            name: `${color[0]}${color.slice(1).toLowerCase()} Bot 🤖`,
-            color, isReady: true, tokens: [], isAI: true,
-          });
-        }
-        room.players.forEach(p => { p.isReady = true; });
-        room.status = "PLAYING";
-        room.players.forEach(p => {
-          p.tokens = Array.from({ length: 4 }).map((_, i) => ({
-            id: `${p.id}-token-${i}`, color: p.color, position: -(i + 1), isFinished: false,
-          }));
-        });
-        room.logs.push("Solo match vs computer started.");
+        startFilledGame(room, "Solo match vs computer started.");
         socket.emit("room:joined", { player: room.players[0], roomState: room });
         scheduleAfter(room);
       } else {
         socket.emit("room:joined", { player: room.players[0], roomState: room });
       }
+    });
+
+    socket.on("matchmaking:join", ({ name }) => {
+      const userId = getUserId(socket.id);
+      if (!userId) return;
+      if (RoomManager.getRoomByPlayer(userId)) return; // already in a game
+      if (!mmQueue.some(e => e.userId === userId)) {
+        const n = (typeof name === "string" ? name : "").trim().slice(0, 24) || "Player";
+        mmQueue.push({ userId, name: n });
+      }
+      mmBroadcast();
+      if (mmQueue.length >= 4) { formMatch(); return; }
+      if (!mmTimer) mmTimer = setTimeout(() => formMatch(), MM_WAIT_MS);
+    });
+
+    socket.on("matchmaking:cancel", () => {
+      const userId = getUserId(socket.id);
+      if (!userId) return;
+      mmRemove(userId);
+      mmStatus(userId, false);
+      if (mmQueue.length === 0 && mmTimer) { clearTimeout(mmTimer); mmTimer = null; }
+      mmBroadcast();
     });
 
     socket.on("room:join", ({ code, name, userId }) => {
@@ -551,6 +622,10 @@ async function startServer() {
       socketToUser.delete(socket.id);
       if (!userId) return;
       if (userToSocket.get(userId) === socket.id) userToSocket.delete(userId);
+
+      // Drop from the matchmaking queue immediately
+      mmRemove(userId);
+      if (mmQueue.length === 0 && mmTimer) { clearTimeout(mmTimer); mmTimer = null; }
 
       if (graceTimers.has(userId)) return;
       graceTimers.set(userId, setTimeout(() => {
