@@ -1,0 +1,20 @@
+{
+  "name": "Ludo Elite — Multiplayer Ludo",
+  "short_name": "Ludo Elite",
+  "description": "Play classic Ludo online with friends or bots. Fast 3D dice, real-time multiplayer, private rooms.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080b14",
+  "theme_color": "#0b1020",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

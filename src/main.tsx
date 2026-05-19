@@ -11,3 +11,10 @@ createRoot(document.getElementById('root')!).render(
     </SocketProvider>
   </StrictMode>,
 );
+
+// PWA: register the service worker (installable + instant repeat loads).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
