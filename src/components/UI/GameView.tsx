@@ -204,12 +204,21 @@ export const GameView: React.FC = () => {
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [gameState?.messages]);
 
-  // Rattle loop during roll — dense cadence for the short 440ms roll; cleared when onSettled fires
+  // Rattle loop during roll — dense cadence; cleared when the roll resolves
   useEffect(() => {
     if (!rolling) return;
     const id = setInterval(() => playSound('ROLL_SHAKE', 0), 130);
     return () => clearInterval(id);
   }, [rolling, playSound]);
+
+  // Hard anti-stuck net. The dice always calls onSettled (~800ms, even on a
+  // no-move roll), but if that ever fails to fire (unmount/race) never let the
+  // roll spin forever and freeze the turn (this was the vs-CPU bot freeze).
+  useEffect(() => {
+    if (!rolling) return;
+    const id = setTimeout(() => { settledCalledRef.current = true; setRolling(false); }, 1800);
+    return () => clearTimeout(id);
+  }, [rolling]);
 
   useEffect(() => {
     if (gameState?.winner) {
@@ -279,13 +288,16 @@ export const GameView: React.FC = () => {
     // No setTimeout — Dice calls onSettled via transitionend when animation completes
   }, [isMyTurn, gameState?.diceValue, rolling, playSound, rollDice]);
 
-  const handleDiceSettled = useCallback((val: number) => {
+  const handleDiceSettled = useCallback((val: number | null) => {
     // Guard: both Dice instances (mobile+desktop) share this callback — only process once
     if (settledCalledRef.current) return;
     settledCalledRef.current = true;
     setRolling(false);
-    playSound('ROLL_LAND');
-    if (val === 6) playSound('SIX');
+    // val === null = no-move roll (server cleared the dice); no land/SIX sound
+    if (val != null) {
+      playSound('ROLL_LAND');
+      if (val === 6) playSound('SIX');
+    }
   }, [playSound]);
 
   const handleTokenMove = (tokenId: string) => {
@@ -435,9 +447,27 @@ export const GameView: React.FC = () => {
         {/* Controls panel */}
         <aside className="game-controls">
 
-          {/* ── MOBILE layout: [Dice] [2×2 emojis] [Chat] ─────────────── */}
-          <div className="md:hidden flex items-center justify-between w-full gap-3 px-1">
-            {/* Dice */}
+          {/* ── MOBILE layout: emojis · [DICE centered] · chat ────────── */}
+          <div className="md:hidden flex items-center w-full px-1">
+            {/* Emoji 2×2 — left region */}
+            <div className="flex-1 flex justify-start">
+              <div className="grid grid-cols-2 gap-1.5">
+                {EMOJIS.map(({ emoji, label, sound }) => (
+                  <motion.button
+                    key={emoji}
+                    whileTap={{ scale: 0.78 }}
+                    onClick={() => handleEmoji(emoji, sound)}
+                    title={label}
+                    className="flex items-center justify-center rounded-xl border border-white/8 bg-white/8 active:bg-white/20"
+                    style={{ width: 42, height: 42 }}
+                  >
+                    <span className="text-xl leading-none">{emoji}</span>
+                  </motion.button>
+                ))}
+              </div>
+            </div>
+
+            {/* Dice — dead-centered between equal flex-1 regions */}
             <div className="shrink-0">
               <Dice
                 size={diceSize}
@@ -449,27 +479,13 @@ export const GameView: React.FC = () => {
               />
             </div>
 
-            {/* Emoji 2×2 */}
-            <div className="grid grid-cols-2 gap-1.5 shrink-0">
-              {EMOJIS.map(({ emoji, label, sound }) => (
-                <motion.button
-                  key={emoji}
-                  whileTap={{ scale: 0.78 }}
-                  onClick={() => handleEmoji(emoji, sound)}
-                  title={label}
-                  className="flex items-center justify-center rounded-xl border border-white/8 bg-white/8 active:bg-white/20"
-                  style={{ width: 44, height: 44 }}
-                >
-                  <span className="text-xl leading-none">{emoji}</span>
-                </motion.button>
-              ))}
+            {/* Chat — right region */}
+            <div className="flex-1 flex justify-end">
+              <button onClick={() => setIsChatOpen(true)}
+                className="w-11 h-11 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-slate-400 active:scale-90">
+                <MessageSquare size={18} />
+              </button>
             </div>
-
-            {/* Chat icon */}
-            <button onClick={() => setIsChatOpen(true)}
-              className="shrink-0 w-11 h-11 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-slate-400 active:scale-90">
-              <MessageSquare size={18} />
-            </button>
           </div>
 
           {/* ── DESKTOP layout: vertical column ────────────────────────── */}

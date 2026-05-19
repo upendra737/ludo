@@ -31,7 +31,7 @@ interface Props {
   rolling: boolean;
   onClick: () => void;
   disabled: boolean;
-  onSettled: (value: number) => void;
+  onSettled: (value: number | null) => void;
   size?: number;
 }
 
@@ -72,9 +72,13 @@ const resultPose = (v: number) => ({
 });
 const IDLE = { x: REST_X, y: REST_Y, z: REST_Z }; // == resultPose(1)
 
-const MIN_TUMBLE_MS      = 200;  // spin floor so a fast server reply still tumbles
-const SETTLE_DURATION_MS = 240;  // spring landing  (total ≈ 440ms, within 400–500ms)
-const FALLBACK_PAD_MS    = 150;  // transitionend safety-net buffer
+// FIXED roll timing — identical for every roll and every player, independent
+// of network/bot latency. The server value is awaited in the background; the
+// cube ALWAYS tumbles exactly ROLL_TUMBLE_MS then settles over
+// SETTLE_DURATION_MS. Total visible roll ≈ 800ms, perfectly consistent.
+const ROLL_TUMBLE_MS     = 560;
+const SETTLE_DURATION_MS = 240;
+const FALLBACK_PAD_MS    = 160;  // transitionend safety-net buffer
 
 export const Dice: React.FC<Props> = ({
   value, rolling, onClick, disabled, onSettled, size = 112,
@@ -105,6 +109,8 @@ export const Dice: React.FC<Props> = ({
   const lastTsRef   = useRef(0);
   const settledRef  = useRef(false);
   const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const valueRef    = useRef<number | null>(value); // latest server value for the fixed-time settle
+  useEffect(() => { valueRef.current = value; }, [value]);
 
   const [glow, setGlow] = useState(false);
 
@@ -124,7 +130,7 @@ export const Dice: React.FC<Props> = ({
     if (fallbackRef.current !== null) { clearTimeout(fallbackRef.current); fallbackRef.current = null; }
   };
 
-  const finishSettle = useCallback((val: number) => {
+  const finishSettle = useCallback((val: number | null) => {
     if (settledRef.current) return;
     settledRef.current = true;
     clearFallback();
@@ -132,9 +138,11 @@ export const Dice: React.FC<Props> = ({
     onSettled(val);
   }, [onSettled]);
 
-  const settle = useCallback((val: number) => {
+  const settle = useCallback((val: number | null) => {
     stopRaf();
-    const pose = resultPose(val);
+    // val === null only on a no-move roll (server cleared the dice). Land on a
+    // neutral pose so the cube stops gracefully instead of spinning forever.
+    const pose = val == null ? IDLE : resultPose(val);
 
     // Current (pre-settle) pose from the last tumble frame
     const fromX = rx.current;
@@ -177,7 +185,11 @@ export const Dice: React.FC<Props> = ({
     }, SETTLE_DURATION_MS + FALLBACK_PAD_MS);
   }, [finishSettle]);
 
-  // ── Choreographed tumble (bounded cone → never edge-on, never flat) ──
+  // ── Choreographed tumble + FIXED-TIME settle ────────────────────────────
+  // Tumble for exactly ROLL_TUMBLE_MS regardless of when (or whether) the
+  // server value arrives, then settle. This makes every roll the same length
+  // for every player AND guarantees the cube always stops (a no-move roll
+  // leaves value === null → settle(null) → onSettled(null) → no infinite spin).
   useEffect(() => {
     if (!rolling) return;
 
@@ -200,18 +212,11 @@ export const Dice: React.FC<Props> = ({
       rafRef.current = requestAnimationFrame(frame);
     };
     rafRef.current = requestAnimationFrame(frame);
-    return stopRaf;
-  }, [rolling]);
 
-  // ── Settle once the true value is known (respecting the tumble floor) ──
-  useEffect(() => {
-    if (!rolling || value === null) return;
-    const elapsed   = performance.now() - startRef.current;
-    const remaining = MIN_TUMBLE_MS - elapsed;
-    if (remaining <= 0) { settle(value); return; }
-    const t = setTimeout(() => settle(value), remaining);
-    return () => clearTimeout(t);
-  }, [rolling, value, settle]);
+    const settleTimer = setTimeout(() => settle(valueRef.current), ROLL_TUMBLE_MS);
+
+    return () => { stopRaf(); clearTimeout(settleTimer); };
+  }, [rolling, settle]);
 
   // Idle / post-turn pose when not rolling. Uses the SAME forward-only delta as
   // settle and no-ops when already in place — so it never fights a just-landed
