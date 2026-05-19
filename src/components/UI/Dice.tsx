@@ -185,6 +185,13 @@ export const Dice: React.FC<Props> = ({
     }, SETTLE_DURATION_MS + FALLBACK_PAD_MS);
   }, [finishSettle]);
 
+  // Pin settle behind a ref so the tumble effect depends ONLY on `rolling`.
+  // Otherwise a re-render that changes settle's identity (gameState updates
+  // arrive mid-roll) would restart the tumble timer and make the roll length
+  // inconsistent again.
+  const settleRef = useRef(settle);
+  useEffect(() => { settleRef.current = settle; }, [settle]);
+
   // ── Choreographed tumble + FIXED-TIME settle ────────────────────────────
   // Tumble for exactly ROLL_TUMBLE_MS regardless of when (or whether) the
   // server value arrives, then settle. This makes every roll the same length
@@ -213,10 +220,10 @@ export const Dice: React.FC<Props> = ({
     };
     rafRef.current = requestAnimationFrame(frame);
 
-    const settleTimer = setTimeout(() => settle(valueRef.current), ROLL_TUMBLE_MS);
+    const settleTimer = setTimeout(() => settleRef.current(valueRef.current), ROLL_TUMBLE_MS);
 
     return () => { stopRaf(); clearTimeout(settleTimer); };
-  }, [rolling, settle]);
+  }, [rolling]);
 
   // Idle / post-turn pose when not rolling. Uses the SAME forward-only delta as
   // settle and no-ops when already in place — so it never fights a just-landed
