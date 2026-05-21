@@ -50,13 +50,23 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     if (socketRef.current) return;
 
-    const socket = io({
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000,
-    });
+    // If the build was made with VITE_SOCKET_URL (e.g. for the itch.io iframe
+    // where the page origin is itch.zone, not our backend), connect there.
+    // Otherwise fall back to same-origin — which is what we want for direct
+    // Railway visits.
+    const url = (import.meta.env.VITE_SOCKET_URL as string | undefined) || undefined;
+    const socket = url
+      ? io(url, {
+          reconnection: true, reconnectionAttempts: Infinity,
+          reconnectionDelay: 1000, reconnectionDelayMax: 5000,
+          timeout: 20000,
+          transports: ['websocket', 'polling'],
+        })
+      : io({
+          reconnection: true, reconnectionAttempts: Infinity,
+          reconnectionDelay: 1000, reconnectionDelayMax: 5000,
+          timeout: 20000,
+        });
     socketRef.current = socket;
 
     socket.on('connect', () => {

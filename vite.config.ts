@@ -6,6 +6,10 @@ import {defineConfig, loadEnv} from 'vite';
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
+    // Relative asset paths so the build also works inside an itch.io iframe
+    // (served from a subpath on html-classic.itch.zone). No behaviour change
+    // for direct Railway visits.
+    base: './',
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
